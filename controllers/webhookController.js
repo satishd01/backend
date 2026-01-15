@@ -1,5 +1,7 @@
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const Order = require('../models/Order');
+const Subscription = require('../models/Subscription'); // ← ADD THIS LINE
+
 
 // Webhook to handle Stripe events (like successful payments)
 const handleStripeWebhook = async (req, res) => {
@@ -92,4 +94,78 @@ const handleStripeWebhook = async (req, res) => {
   }
 };
 
-module.exports = { handleStripeWebhook };
+// Add to webhookController.js or create subscriptionWebhook.js
+const handleSubscriptionWebhook = async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  const payload = req.body;
+  const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+  let event;
+
+  try {
+    if (!sig) {
+      event = JSON.parse(payload.toString());
+    } else {
+      event = stripe.webhooks.constructEvent(payload, sig, endpointSecret);
+    }
+  } catch (err) {
+    console.error('Webhook error:', err);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  switch (event.type) {
+    case 'invoice.payment_succeeded':
+      const invoice = event.data.object;
+      
+      if (invoice.subscription) {
+        try {
+          const subscription = await Subscription.findOne({
+            stripeSubscriptionId: invoice.subscription
+          });
+
+          if (subscription) {
+            subscription.paymentStatus = 'COMPLETED';
+            subscription.status = 'active';
+            await subscription.save();
+            
+            console.log(`✅ Subscription payment succeeded: ${subscription._id}`);
+          }
+        } catch (error) {
+          console.error('Failed to update subscription:', error);
+        }
+      }
+      break;
+
+    case 'invoice.payment_failed':
+      const failedInvoice = event.data.object;
+      
+      if (failedInvoice.subscription) {
+        try {
+          const subscription = await Subscription.findOne({
+            stripeSubscriptionId: failedInvoice.subscription
+          });
+
+          if (subscription) {
+            subscription.paymentStatus = 'FAILED';
+            subscription.status = 'cancelled';
+            await subscription.save();
+            
+            console.log(`❌ Subscription payment failed: ${subscription._id}`);
+          }
+        } catch (error) {
+          console.error('Failed to update failed subscription:', error);
+        }
+      }
+      break;
+
+    default:
+      console.log(`Unhandled event type: ${event.type}`);
+  }
+
+  res.status(200).send({ received: true });
+};
+
+
+
+module.exports = { handleStripeWebhook, handleSubscriptionWebhook };
+

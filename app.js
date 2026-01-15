@@ -4,6 +4,7 @@ const cookieParser = require('cookie-parser');
 
 const userRoutes = require('./routes/userRoutes')
 const businessRoutes = require('./routes/businessRoutes');
+const vendorOnboardRoutes = require('./routes/vendorOnboarding.routes');
 const subscriptionPlanRoutes = require('./routes/subscriptionPlanRoutes')
 const productRoutes = require('./routes/productRoutes');
 const serviceRoutes = require('./routes/serviceRoutes');
@@ -13,6 +14,9 @@ const subscriptionRoutes = require('./routes/subscriptionRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
 const publicListingRoutes = require('./routes/publicListing');
 const privateListingRoutes = require('./routes/privateListing');
+const businessProfileRoutes = require('./routes/businessProfileRoutes');
+
+
 
 
 // Content Management Route - FAQ / BLOG / TESTIMONIALS
@@ -29,6 +33,7 @@ const productSubcategoryRoutes = require('./routes/admin/productSubcategoryRoute
 const ServiceCategoryRoutes = require('./routes/admin/categoryRoutes')
 const foodCategoryRoutes = require('./routes/admin/foodCategoryRoutes')
 const adminBusinessRoutes = require('./routes/admin/businessRoutes')
+const vendorOnboardVerifyStage1Routes= require("./routes/vendorOnboarding.routes")
 
 
 // User Routes
@@ -101,8 +106,19 @@ app.use(cors({
 app.use(cookieParser());
 const stripeRoutes = require('./routes/stripeRoutes');
 
+const { handleVendorPaymentWebhook } = require('./controllers/vendorOnboarding.controller');
+const { handleSubscriptionWebhook } = require('./controllers/webhookController');
+
 
 app.use('/api/stripe', stripeRoutes);
+app.use('/api/vendor-onboarding/webhook/payment', 
+  express.raw({ type: 'application/json' }), 
+  handleVendorPaymentWebhook
+);
+app.use('/api/subscription/webhook', 
+  express.raw({ type: 'application/json' }), 
+  handleSubscriptionWebhook
+);
 app.use(express.json());
 
 
@@ -111,12 +127,14 @@ app.use('/api', publicListingRoutes);
 app.use('/api/private', privateListingRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/business', businessRoutes);
+app.use('/api/vendor-onboarding', vendorOnboardRoutes);
+app.use('/admin/vendor-onboard-verify-stage1', vendorOnboardVerifyStage1Routes);
 app.use('/api/subscription-plans', subscriptionPlanRoutes);
 app.use('/api/product', productRoutes);
 app.use('/api/service', serviceRoutes);
 app.use('/api/minority-types', minorityTypeRoutes);
 app.use('/api', uploadImageRoute);
-app.use('/api', subscriptionRoutes);
+app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api', categoryRoutes);
 
 
@@ -130,10 +148,18 @@ app.use('/admin/faqs', adminFaqRoutes);
 app.use('/api/admin/testimonials', testimonialRoutes);
 app.use('/admin/api/blogs', blogRoutes);
 app.use('/admin/api/business', adminBusinessRoutes);
+app.use('/api/business-profile', businessProfileRoutes);
 app.use('/api/admin/category/product', productCategoryRoutes);
 app.use('/api/admin/category/product-subcategory', productSubcategoryRoutes);
 app.use('/api/admin/category/service', ServiceCategoryRoutes);
 app.use('/api/admin/category/food', foodCategoryRoutes);
+// In app.js, add:
+const businessProfileVerifyRoutes = require('./routes/admin/businessProfileVerifyRoutes');
+app.use('/admin/business-profile-verify', businessProfileVerifyRoutes);
+
+
+
+
 
 
 // User Routes

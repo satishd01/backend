@@ -1,0 +1,201 @@
+const mongoose = require("mongoose");
+
+
+
+
+const VendorOnboardingStage1Schema = new mongoose.Schema(
+
+  {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      unique: true,
+      index: true,
+    },
+      applicationId: {
+     type: String,
+     unique: true,
+     index: true,
+     immutable: true,
+     },
+
+    /* BUSINESS IDENTITY */
+
+    businessName: String,
+
+    isMinorityOwned: Boolean,
+
+    minorityCategories: [
+      {
+        type: String,
+        enum: [
+          "African-American",
+          "Asian",
+          "LatinX",
+          "Woman",
+          "Disabled Veteran",
+          "Other",
+        ],
+      },
+    ],
+
+    minorityProofDocuments: [
+      {
+        url: String,
+        verified: { type: Boolean, default: false },
+      },
+    ],
+
+    /* TAX DETAILS */
+
+    hasEIN: Boolean,
+
+    einNumber: {
+      type: String,
+      match: /^[0-9]{9}$/,
+    },
+
+    ssnLast9: {
+      type: String,
+      match: /^[0-9]{9}$/,
+    },
+
+    taxDocuments: [
+      {
+        url: String,
+        verified: { type: Boolean, default: false },
+      },
+    ],
+
+    /* BUSINESS LICENSE */
+
+    hasBusinessLicense: Boolean,
+
+    businessLicenseDocuments: [
+      {
+        url: String,
+        verified: { type: Boolean, default: false },
+      },
+    ],
+
+    /* BUSINESS DETAILS */
+
+    ownershipType: {
+      type: String,
+      enum: [
+        "Limited Liability Company",
+        "Sole Proprietor",
+        "S-Corporation",
+        "C-Corporation",
+        "Nonprofit",
+      ],
+    },
+
+    yearsInBusiness: {
+      type: String,
+      enum: ["6mo-1yr", "1yr-2yr", "2yr+"],
+    },
+
+    isFranchise: Boolean,
+    franchiseName: String,
+
+    businessType: {
+      type: String,
+      enum: ["product", "service", "food"],
+    },
+
+    usesThirdPartyBooking: Boolean,
+    hasPhysicalLocation: Boolean,
+
+    /* ONLINE PRESENCE */
+
+    website: String,
+    facebook: String,
+    instagram: String,
+    linkedin: String,
+    tiktok: String,
+
+    /* CONTACT DETAILS */
+
+    primaryContactName: String,
+    primaryContactDesignation: String,
+
+    secondaryBusinessEmail: String,
+
+    address: {
+      street: String,
+      city: String,
+      state: String,
+      country: String,
+      zipCode: String,
+    },
+
+    employeesCount: {
+      type: String,
+      enum: ["0-1", "2-5", "6-10", "10+"],
+    },
+
+    /* AGREEMENTS */
+
+    acceptedTerms: {
+      type: Boolean,
+      default: false,
+    },
+
+    declarationAccepted: {
+      type: Boolean,
+      default: false,
+    },
+
+    /* PAYMENT */
+
+    verificationPayment: {
+      provider: { type: String, enum: ["stripe"] },
+      paymentIntentId: String,
+      status: {
+        type: String,
+        enum: ["not_started", "pending", "paid", "failed"],
+        default: "not_started",
+      },
+      paidAt: Date,
+    },
+
+    /* STAGE STATUS */
+
+    status: {
+      type: String,
+      enum: ["draft", "payment_pending", "submitted", "verified", "rejected"],
+      default: "draft",
+      index: true,
+    },
+
+    totalVerificationPoints: {
+      type: Number,
+      default: 0,
+    },
+    verificationChecklist: {
+  minorityDocs: { type: Boolean, default: false },
+  taxDocs: { type: Boolean, default: false },
+  businessLicense: { type: Boolean, default: false },
+  website: { type: Boolean, default: false },
+  facebook: { type: Boolean, default: false },
+  instagram: { type: Boolean, default: false },
+  linkedin: { type: Boolean, default: false },
+  tiktok: { type: Boolean, default: false },
+},
+  },
+  { timestamps: true }
+);
+
+VendorOnboardingStage1Schema.pre("save", function (next) {
+  if (!this.applicationId) {
+    const random = Math.random().toString(36).substring(2, 8).toUpperCase();
+    this.applicationId = `MBH-APP-${Date.now()}-${random}`;
+  }
+  next();
+});
+
+module.exports =
+  mongoose.models.VendorOnboardingStage1 ||
+  mongoose.model("VendorOnboardingStage1", VendorOnboardingStage1Schema);

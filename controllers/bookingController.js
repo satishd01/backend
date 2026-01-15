@@ -6,6 +6,8 @@ exports.createBooking = async (req, res) => {
   try {
     const { name, email, phone, serviceId, serviceItems, date, time, notes, amountPaid, paymentStatus } = req.body;
 
+    console.log(req.body,"booking body");
+
     const service = await Service.findById(serviceId);
     if (!service) return res.status(404).json({ success: false, message: "Service not found" });
 
@@ -24,6 +26,8 @@ exports.createBooking = async (req, res) => {
       customerInfo: { name, email, phone }
 
     });
+
+    console.log(newBooking,"booking created")
 
     res.status(201).json({ success: true, booking: newBooking });
   } catch (error) {

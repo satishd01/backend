@@ -1,26 +1,143 @@
-const Subscription = require('../models/Subscription'); // Import Subscription model
-const SubscriptionPlan = require('../models/SubscriptionPlan'); // Import SubscriptionPlan model
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const Subscription = require('../models/Subscription');
+const SubscriptionPlan = require('../models/SubscriptionPlan');
+const { ensurePlanPrice } = require('../helpers/stripePlan'); // ← ADD THIS
+
+exports.createSubscription = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { planId } = req.body;
+
+    if (!planId) {
+      return res.status(400).json({
+        success: false,
+        message: 'planId is required'
+      });
+    }
+
+    // Get plan
+    const plan = await SubscriptionPlan.findById(planId);
+    if (!plan) {
+      return res.status(404).json({
+        success: false,
+        message: 'Plan not found'
+      });
+    }
+
+    // ✅ FIX: Ensure Stripe price exists
+    await ensurePlanPrice(plan);
+
+    if (!plan.stripePriceId) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to create Stripe price for plan'
+      });
+    }
+
+    // Create Stripe customer
+    const customer = await stripe.customers.create({
+      email: req.user.email,
+      name: req.user.name,
+      metadata: { userId: userId.toString() }
+    });
+
+    // Create subscription with incomplete status
+    const stripeSubscription = await stripe.subscriptions.create({
+      customer: customer.id,
+      items: [{ price: plan.stripePriceId }],
+      payment_behavior: 'default_incomplete',
+      payment_settings: { save_default_payment_method: 'on_subscription' },
+      expand: ['latest_invoice.payment_intent'],
+      metadata: {
+        userId: userId.toString(),
+        planId: planId.toString()
+      }
+    });
+
+    // Get client secret - if missing, create payment intent manually
+    let clientSecret = stripeSubscription.latest_invoice?.payment_intent?.client_secret;
+
+    if (!clientSecret && plan.price > 0) {
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: Math.round(plan.price * 100),
+        currency: plan.currency || 'usd',
+        customer: customer.id,
+        metadata: {
+          subscriptionId: stripeSubscription.id,
+          userId: userId.toString()
+        }
+      });
+      clientSecret = paymentIntent.client_secret;
+    }
+
+    // Create local subscription
+    const startDate = new Date();
+    const endDate = new Date();
+    endDate.setDate(startDate.getDate() + plan.durationInDays);
+
+    const subscription = new Subscription({
+      userId,
+      subscriptionPlanId: planId,
+      stripeSubscriptionId: stripeSubscription.id,
+      stripeCustomerId: customer.id,
+      paymentStatus: clientSecret ? 'PENDING' : 'COMPLETED',
+      payerEmail: req.user.email,
+      startDate,
+      endDate,
+      status: clientSecret ? 'pending' : 'active'
+    });
+
+    await subscription.save();
+
+    return res.status(201).json({
+      success: true,
+      message: clientSecret ? 'Subscription created, payment required' : 'Subscription activated',
+      data: {
+        subscriptionId: subscription._id,
+        stripeSubscriptionId: stripeSubscription.id,
+        clientSecret,
+        amount: plan.price * 100,
+        currency: plan.currency
+      }
+    });
+
+  } catch (error) {
+    console.error('Subscription creation error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to create subscription',
+      error: error.message
+    });
+  }
+};
+
 
 // Get user's subscriptions and populate subscription plan
 exports.getUserSubscriptions = async (req, res) => {
     try {
-        // Find subscriptions linked to the user
-        const userId = req.user._id; // assuming you're using some sort of authentication middleware
         const subscriptions = await Subscription.find({
             userId: req.user._id,
-            businessId: null  // Add condition to check for subscriptions with no linked business
+            businessId: null
         })
-            .populate('subscriptionPlanId')  // Populate the plan details
+            .populate('subscriptionPlanId')
             .exec();
 
         if (!subscriptions || subscriptions.length === 0) {
-            return res.status(404).json({ message: 'No subscriptions found for the user.' });
+            return res.status(404).json({ 
+                success: false,
+                message: 'No subscriptions found for the user.' 
+            });
         }
 
-        // Return the populated subscriptions
-        res.status(200).json({ subscriptions });
+        res.status(200).json({ 
+            success: true,
+            data: subscriptions 
+        });
     } catch (error) {
         console.error('Error fetching subscriptions:', error);
-        res.status(500).json({ message: 'Error fetching subscriptions, please try again later.' });
+        res.status(500).json({ 
+            success: false,
+            message: 'Error fetching subscriptions, please try again later.' 
+        });
     }
 };

@@ -60,9 +60,28 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    badge: {
+  type: String,
+  enum: ['Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond'],
+  default: 'Bronze'
+},
+totalPoints: {
+  type: Number,
+  default: 0
+},
+
+verificationStatus: {
+  type: String,
+  enum: ['pending', 'in_progress', 'completed'],
+  default: 'pending'
+},
+    // minorityType: {
+    //   type: mongoose.Schema.Types.ObjectId,
+    //   ref: 'MinorityType',
+    //   required: function () { return this.provider === 'local'; }
+    // }
     minorityType: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'MinorityType',
+      type: String,
       required: function () { return this.provider === 'local'; }
     }
   },

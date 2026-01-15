@@ -5,32 +5,34 @@ const subscriptionPlanSchema = new mongoose.Schema({
   name: {
     type: String,
     required: true,
-    unique: true, // Basic, Pro, Premium, etc.
+    unique: true,
+    enum: ['Silver Plan', 'Gold Plan', 'Platinum Plan']
   },
   price: {
     type: Number,
     required: true,
   },
   currency: { type: String, default: 'usd' },
-  interval: { type: String, enum: ['day', 'week', 'month', 'year'], default: 'year' }, // <- NEW
-  intervalCount: { type: Number, default: 1 },                        // <- NEW
-  trialPeriodDays: { type: Number, default: 0 },                      // <- NEW
+  interval: { type: String, enum: ['day', 'week', 'month', 'year'], default: 'year' },
+  intervalCount: { type: Number, default: 1 },
+  trialPeriodDays: { type: Number, default: 0 },
 
   durationInDays: {
     type: Number,
     default: 365, // Annual by default
   },
 
-  stripeProductId: { type: String },                                  // <- NEW
-  stripePriceId: { type: String, unique: true, sparse: true },      // <- NEW
+  stripeProductId: { type: String },
+  stripePriceId: { type: String, unique: true, sparse: true },
   
   limits: {
-    productListings: { type: Number, default: 1 },
-    serviceListings: { type: Number, default: 1 },
-    foodListings: { type: Number, default: 1 },
-    imageLimit: { type: Number, default: 3 },
-    videoLimit: { type: Number, default: 0 },
+    productListings: { type: Number, required: true },
+    serviceListings: { type: Number, required: true },
+    foodListings: { type: Number, required: true },
+    imageLimit: { type: Number, required: true },
+    videoLimit: { type: Number, required: true },
   },
+  
   features: {
     analyticsDashboard: { type: Boolean, default: false },
     marketingTools: { type: Boolean, default: false },
@@ -41,6 +43,8 @@ const subscriptionPlanSchema = new mongoose.Schema({
     listingPriority: { type: Boolean, default: false },
     pushNotifications: { type: Boolean, default: false },
     aiRecommendation: { type: Boolean, default: false },
+    topTierPlacement: { type: Boolean, default: false },
+    topTierVisibility: { type: Boolean, default: false }
   },
 }, { timestamps: true });
 

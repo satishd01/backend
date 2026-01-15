@@ -4,7 +4,7 @@ const jwt = require('jsonwebtoken');
 const { validationResult } = require('express-validator');
 const { sendOtpEmail } = require('../utils/mailer');
 
-exports.registerUser = async (req, res) => {
+ exports.registerUser = async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
         return res.status(400).json({ success: false, errors: errors.array() });
@@ -40,16 +40,21 @@ exports.registerUser = async (req, res) => {
 
         await newUser.save();
 
-        console.log(`🔐 OTP for ${email} is: ${otp}`); // Simulate sending OTP
-        await sendOtpEmail(email, otp);
+        console.log(`🔐 OTP for ${email} is: ${otp}`);
+        
+        // Handle email sending failure gracefully
+        try {
+            await sendOtpEmail(email, otp);
+        } catch (emailError) {
+            console.error('Failed to send OTP email:', emailError);
+            // Continue anyway - user can resend OTP
+        }
 
         res.cookie('otpPending', 'true', {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
             sameSite: 'strict',
-            // sameSite: 'none',
-            // domain: '.mosaicbizhub.com',
-            maxAge: 10 * 60 * 1000, // 10 minutes
+            maxAge: 10 * 60 * 1000,
         });
 
         res.status(201).json({
@@ -61,6 +66,7 @@ exports.registerUser = async (req, res) => {
         res.status(500).json({ success: false, message: 'Server error' });
     }
 };
+
 
 // -------------------------------------------------------otp verifictaion and otp resend ----------------------------------------------------
 

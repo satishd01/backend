@@ -1,0 +1,186 @@
+Vendor Onboarding flow Step1 Diagram date 18-12-2025
+
+┌──────────────────────────┐        ┌──────────────────────────────┐
+│          VENDOR          │        │           ADMIN              │
+└──────────────────────────┘        └──────────────────────────────┘
+            │                                     │
+            │ 1. Start Vendor Registration       │
+            │──────────────────────────────────▶│
+            │                                     │
+┌──────────────────────────┐                      │
+│        FRONTEND          │                      │
+│  (Step-1 Onboarding UI)  │                      │
+└──────────────────────────┘                      │
+            │                                     │
+            │ 2. Enter Business & Legal Details  │
+            │  - Minority Ownership              │
+            │  - EIN / SSN                       │
+            │  - Business License                │
+            │  - Social Links                    │
+            │  - Contact Info                   │
+            │                                     │
+            ▼                                     │
+┌──────────────────────────┐                      │
+│         BACKEND          │                      │
+│  Create DRAFT Application│                      │
+└──────────────────────────┘                      │
+            │                                     │
+            │ 3. Send OTP (Email + Phone)        │
+            │──────────────────────────────────▶│
+            │                                     │
+┌──────────────────────────┐                      │
+│   EMAIL / SMS SERVICE    │                      │
+└──────────────────────────┘                      │
+            │                                     │
+            │ 4. OTP Verified                    │
+            │◀──────────────────────────────────│
+            │                                     │
+┌──────────────────────────┐                      │
+│         BACKEND          │                      │
+│  Validated Application   │                      │
+└──────────────────────────┘                      │
+            │                                     │
+            │ 5. Upload Documents                │
+            │──────────────────────────────────▶│
+            │                                     │
+┌──────────────────────────┐                      │
+│      FILE STORAGE        │                      │
+│   (S3 / Cloud Storage)   │                      │
+└──────────────────────────┘                      │
+            │                                     │
+            │ 6. Pay Trust Fee ($24.99)          │
+            │──────────────────────────────────▶│
+            │                                     │
+┌──────────────────────────┐                      │
+│     PAYMENT GATEWAY      │                      │
+│        (Stripe)          │                      │
+└──────────────────────────┘                      │
+            │                                     │
+            │  Payment Success                   │
+            │◀──────────────────────────────────│
+            │                                     │
+┌──────────────────────────┐                      │
+│         BACKEND          │                      │
+│  Status → UNDER_REVIEW   │                      │
+└──────────────────────────┘                      │
+            │                                     │
+            │ 7. Notify Admin                    │
+            │──────────────────────────────────▶│
+            │                                     │
+                                           ┌──────────────────────────┐
+                                           │    ADMIN PANEL            │
+                                           │  Vendor Applications List │
+                                           └──────────────────────────┘
+                                                     │
+                                                     │ 8. Open Application
+                                                     ▼
+                                           ┌──────────────────────────┐
+                                           │ Admin Verification Screen │
+                                           │ - Verify Docs             │
+                                           │ - Verify EIN / SSN        │
+                                           │ - Verify License          │
+                                           │ - Verify Social Links     │
+                                           └──────────────────────────┘
+                                                     │
+                                                     │ 9. Allocate Points
+                                                     ▼
+                                           ┌──────────────────────────┐
+                                           │        BACKEND            │
+                                           │  Recalculate Trust Score  │
+                                           └──────────────────────────┘
+                                                     │
+                           ┌─────────────────────────┴─────────────────────────┐
+                           │                                                       │
+                           ▼                                                       ▼
+              ┌──────────────────────────┐                        ┌──────────────────────────┐
+              │  Points ≥ 30              │                        │  Points < 30              │
+              │  APPROVED_FOR_TIER        │                        │  REJECTED                 │
+              └──────────────────────────┘                        └──────────────────────────┘
+                           │                                                       │
+                           │ 10. Approval Email                                    │ 10. Rejection Email
+                           ▼                                                       ▼
+              ┌──────────────────────────┐                        ┌──────────────────────────┐
+              │ Vendor proceeds to Step-2│                        │ Community Rep Follow-up   │
+              └──────────────────────────┘                        └──────────────────────────┘
+
+
+Minority Ownership Documents     → 10 Points
+EIN / SSN Verification           → 10 Points
+Business License Verification   → 10 Points
+Website Verified                → 5 Points
+Facebook Verified               → 5 Points
+Instagram Verified              → 5 Points
+LinkedIn Verified               → 5 Points
+TikTok Verified                 → 5 Points
+
+
+End-of-Day Summary – 18-dec-25
+
+
+Vendor Onboarding – Stage 1 (Summary)
+
+Implemented vendor registration with email OTP verification
+
+JWT token issued after OTP verification for onboarding APIs
+
+Created separate Vendor Onboarding Stage-1 model (kept User model clean)
+
+Implemented draft-based onboarding flow (save, fetch, submit)
+
+Added full Stage-1 validations before submission
+
+Integrated secure document upload using S3 presigned URLs
+
+Files uploaded directly from frontend; backend stores only file URLs
+
+Submission moves onboarding from draft → submitted for admin review
+
+
+End-of-Day Summary – 19-dec-25
+
+Implemented Vendor Stage-1 onboarding backend flow
+
+Completed OTP-based vendor registration and authentication
+
+Designed and implemented VendorOnboardingStage1 schema with:
+
+Unique applicationId
+
+Business identity, legal, and contact details
+
+Document references (S3 URLs)
+
+Payment status tracking
+
+Stage status management
+
+Implemented draft save, fetch draft, and submit for review APIs
+
+Integrated Stripe PaymentIntent for Stage-1 verification fee
+
+Enforced payment gating before submission
+
+Added AWS S3 presigned URL flow for document uploads
+
+Wired email notification hooks (admin + vendor) — pending credential setup
+
+Ensured industry-level validations and status locking
+
+Finalized Stage-1 submission flow ready for admin verification
+
+Pending / Next Steps
+
+Admin verification APIs (points allocation & approval logic)
+
+Email service configuration (AWS SES)
+
+Stage-2 onboarding flow (tier selection)       
+
+
+
+
+
+
+
+
+

@@ -9,7 +9,7 @@ const router = express.Router();
 // Rate limiter for login
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 5,
+  max: 6,
   message: 'Too many login attempts. Please try again later.',
 });
 
@@ -63,3 +63,4 @@ router.get('/auth/check', authenticate, (req, res) => {
 
 
 module.exports = router;
+ 
