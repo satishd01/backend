@@ -82,7 +82,6 @@ verificationStatus: {
     // }
     minorityType: {
       type: String,
-      required: function () { return this.provider === 'local'; }
     }
   },
   { timestamps: true }

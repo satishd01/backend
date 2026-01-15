@@ -2,7 +2,8 @@ const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { validationResult } = require('express-validator');
-const { sendOtpEmail } = require('../utils/mailer');
+const { sendOtpEmail, sendWelcomeEmail } = require('../utils/mailer');
+
 
  exports.registerUser = async (req, res) => {
     const errors = validationResult(req);
@@ -89,7 +90,6 @@ exports.verifyOtp = async (req, res) => {
             return res.status(403).json({ success: false, message: 'Account is blocked by admin' });
         }
 
-
         if (user.otpExpiry < Date.now()) {
             return res.status(400).json({ success: false, message: 'OTP has expired' });
         }
@@ -105,6 +105,14 @@ exports.verifyOtp = async (req, res) => {
         user.otpExpiry = undefined;
         await user.save();
 
+        // Send welcome email
+        try {
+            const firstName = user.name.split(' ')[0];
+            await sendWelcomeEmail(user.email, firstName);
+        } catch (emailError) {
+            console.error('Failed to send welcome email:', emailError);
+        }
+
         // Generate JWT Token
         const token = jwt.sign(
             { userId: user._id, role: user.role },
@@ -116,16 +124,12 @@ exports.verifyOtp = async (req, res) => {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
             sameSite: 'strict',
-            // sameSite: 'none',
-            // domain: '.mosaicbizhub.com',
-            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+            maxAge: 7 * 24 * 60 * 60 * 1000,
         });
 
         res.cookie('user_session', 'true', {
             httpOnly: false,
             sameSite: 'strict',
-            // sameSite: 'none',
-            // domain: '.mosaicbizhub.com',
             secure: process.env.NODE_ENV === 'production',
             maxAge: 7 * 24 * 60 * 60 * 1000,
         });
@@ -134,8 +138,6 @@ exports.verifyOtp = async (req, res) => {
             httpOnly: false,
             secure: process.env.NODE_ENV === 'production',
             sameSite: 'strict',
-            // sameSite: 'none',
-            // domain: '.mosaicbizhub.com',
             maxAge: 7 * 24 * 60 * 60 * 1000,
         });
 
@@ -160,6 +162,7 @@ exports.verifyOtp = async (req, res) => {
         res.status(500).json({ success: false, message: 'Server error' });
     }
 };
+
 
 
 // OTP Resend
