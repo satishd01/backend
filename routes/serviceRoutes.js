@@ -1,8 +1,14 @@
 const express = require('express');
 const router = express.Router();
-const { createService, getMyServices, deleteService, updateService, getServiceById } = require('../controllers/serviceController');
+const { createService, getMyServices, deleteService, updateService, getServiceById, getServiceUploadUrl } = require('../controllers/serviceController');
 const authenticate = require('../middlewares/authenticate');
 const isBusinessOwner = require('../middlewares/isBusinessOwner');
+
+router.get(
+  '/upload-url',
+  authenticate,
+  getServiceUploadUrl
+);
 
 router.post(
   '/',
@@ -44,8 +50,9 @@ router.put(
 
 
 
+
 router.get('/', (req, res) => {
-  res.json({ message: 'Mosaic Biz Hub API is working' });
+  res.json({ message: 'Mosaic Biz Hub API is working 5feb' });
 });
 
 module.exports = router;

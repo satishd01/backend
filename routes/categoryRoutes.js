@@ -1,5 +1,5 @@
 const express = require('express');
-const { getAllCategoriesAdmin,getAllCategories, getProductCategories,getProductSubcategories, listSubcategories } = require('../controllers/categoryController');
+const { getAllCategoriesAdmin, getAllCategories, getProductCategories, getServiceCategories, getFoodCategories, getProductSubcategories, listSubcategories } = require('../controllers/categoryController');
 const s3Controller = require('../controllers/s3Controller');
 const authenticate = require('../middlewares/authenticate');
 const isBusinessOwnerOrAdmin = require('../middlewares/isBusinessOwnerOrAdmin');
@@ -7,6 +7,9 @@ const router = express.Router();
 
 // Route to get all categories
 router.get('/categories', getAllCategories);
+router.get('/categories/products', getProductCategories);
+router.get('/categories/services', getServiceCategories);
+router.get('/categories/foods', getFoodCategories);
 router.get('/getProductCategories', getProductCategories);
 router.get('/subcategories/:categoryId', getProductSubcategories);
 router.get('/sub-categories', listSubcategories);

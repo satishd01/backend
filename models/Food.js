@@ -35,6 +35,11 @@ const foodSchema = new mongoose.Schema(
       ref: 'FoodCategory',
       required: true,
     },
+        subcategoryId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'FoodSubcategory',
+      required: true,
+    },
     location: {
       type: {
         type: String,
@@ -94,6 +99,12 @@ const foodSchema = new mongoose.Schema(
       default: 0,
       min: 0,
       max: 5,
+    },
+
+    badge: {
+      type: String,
+      enum: ['gold', 'silver', 'bronze'],
+      trim: true,
     },
   },
   { timestamps: true }

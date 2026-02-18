@@ -19,11 +19,6 @@ const productSchema = new mongoose.Schema({
     required: true,
   },
 
-  brand: {
-    type: String,
-    trim: true,
-  },
-
   categoryId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'ProductCategory',
@@ -48,45 +43,67 @@ const productSchema = new mongoose.Schema({
     required: true,
   },
 
-  minorityType: {
-    type: String,
-    trim: true,
-    required: true,
+  /* ===============================
+     ATTRIBUTES (Size, Color etc.)
+  =============================== */
+
+  attributes: [
+    {
+      name: { type: String, required: true }, // Size / Color
+      values: [{ type: String, required: true }] // Small, Medium / Black, Blue
+    }
+  ],
+
+  /* ===============================
+     SHIPPING
+  =============================== */
+
+  shipping: {
+    standard: { type: Number, default: 0 },
+    overnight: { type: Number, default: 0 },
+    local: { type: Number, default: 0 }
   },
 
-  isPublished: {
-    type: Boolean,
-    default: false,
-  },
-
-  isDeleted: {
-    type: Boolean,
-    default: false,
-  },
+  /* ===============================
+     MEDIA
+  =============================== */
 
   coverImage: {
     type: String,
     required: true,
   },
 
-  variantOptions: {
-    type: Map,
-    of: [String],
-    default: {},
+  galleryImages: {
+    type: [String],
+    default: [],
   },
 
-  specifications: [
+  /* ===============================
+     SEO / META
+  =============================== */
+
+  metaFields: [
     {
-      key: { type: String, required: true },
-      value: { type: String, required: true },
+      key: String,
+      value: String,
     }
   ],
-  variants: [
-    {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'ProductVariant',
-    }
-  ]
+
+  /* ===============================
+     DISCOUNTS
+  =============================== */
+
+  discount: {
+    type: {
+      type: String,
+      enum: ['value', 'percentage'],
+    },
+    amount: Number,
+    minCartValue: Number
+  },
+
+  isPublished: { type: Boolean, default: false },
+  isDeleted: { type: Boolean, default: false },
 
 }, { timestamps: true });
 
@@ -106,9 +123,6 @@ productSchema.pre('save', async function (next) {
   next();
 });
 
-productSchema.index({ businessId: 1 });
-productSchema.index({ categoryId: 1, subcategoryId: 1 });
-productSchema.index({ isPublished: 1, isDeleted: 1, createdAt: -1 });
-
-
-module.exports = mongoose.models.Product || mongoose.model('Product', productSchema);
+module.exports =
+  mongoose.models.Product ||
+  mongoose.model('Product', productSchema);

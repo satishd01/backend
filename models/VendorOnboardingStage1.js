@@ -1,10 +1,6 @@
 const mongoose = require("mongoose");
 
-
-
-
 const VendorOnboardingStage1Schema = new mongoose.Schema(
-
   {
     userId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -13,15 +9,14 @@ const VendorOnboardingStage1Schema = new mongoose.Schema(
       unique: true,
       index: true,
     },
-      applicationId: {
-     type: String,
-     unique: true,
-     index: true,
-     immutable: true,
-     },
+    applicationId: {
+      type: String,
+      unique: true,
+      index: true,
+      immutable: true,
+    },
 
     /* BUSINESS IDENTITY */
-
     businessName: String,
 
     isMinorityOwned: Boolean,
@@ -48,7 +43,6 @@ const VendorOnboardingStage1Schema = new mongoose.Schema(
     ],
 
     /* TAX DETAILS */
-
     hasEIN: Boolean,
 
     einNumber: {
@@ -69,7 +63,6 @@ const VendorOnboardingStage1Schema = new mongoose.Schema(
     ],
 
     /* BUSINESS LICENSE */
-
     hasBusinessLicense: Boolean,
 
     businessLicenseDocuments: [
@@ -80,7 +73,6 @@ const VendorOnboardingStage1Schema = new mongoose.Schema(
     ],
 
     /* BUSINESS DETAILS */
-
     ownershipType: {
       type: String,
       enum: [
@@ -109,7 +101,6 @@ const VendorOnboardingStage1Schema = new mongoose.Schema(
     hasPhysicalLocation: Boolean,
 
     /* ONLINE PRESENCE */
-
     website: String,
     facebook: String,
     instagram: String,
@@ -117,10 +108,8 @@ const VendorOnboardingStage1Schema = new mongoose.Schema(
     tiktok: String,
 
     /* CONTACT DETAILS */
-
     primaryContactName: String,
     primaryContactDesignation: String,
-
     secondaryBusinessEmail: String,
 
     address: {
@@ -137,7 +126,6 @@ const VendorOnboardingStage1Schema = new mongoose.Schema(
     },
 
     /* AGREEMENTS */
-
     acceptedTerms: {
       type: Boolean,
       default: false,
@@ -149,7 +137,6 @@ const VendorOnboardingStage1Schema = new mongoose.Schema(
     },
 
     /* PAYMENT */
-
     verificationPayment: {
       provider: { type: String, enum: ["stripe"] },
       paymentIntentId: String,
@@ -162,7 +149,6 @@ const VendorOnboardingStage1Schema = new mongoose.Schema(
     },
 
     /* STAGE STATUS */
-
     status: {
       type: String,
       enum: ["draft", "payment_pending", "submitted", "verified", "rejected"],
@@ -174,16 +160,56 @@ const VendorOnboardingStage1Schema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    
     verificationChecklist: {
-  minorityDocs: { type: Boolean, default: false },
-  taxDocs: { type: Boolean, default: false },
-  businessLicense: { type: Boolean, default: false },
-  website: { type: Boolean, default: false },
-  facebook: { type: Boolean, default: false },
-  instagram: { type: Boolean, default: false },
-  linkedin: { type: Boolean, default: false },
-  tiktok: { type: Boolean, default: false },
-},
+      minorityDocs: { type: Boolean, default: false },
+      taxDocs: { type: Boolean, default: false },
+      businessLicense: { type: Boolean, default: false },
+      website: { type: Boolean, default: false },
+      facebook: { type: Boolean, default: false },
+      instagram: { type: Boolean, default: false },
+      linkedin: { type: Boolean, default: false },
+      tiktok: { type: Boolean, default: false },
+    },
+
+    /* ===== ADDED MISSING FIELDS FROM SCREENSHOT ===== */
+    
+    /* PERSONAL INFORMATION */
+    firstName: String,
+    lastName: String,
+    primaryEmail: String,
+    primaryPhone: String,
+    language: String,
+    
+    /* BUSINESS INFORMATION - ADDITIONAL */
+    licenseNumber: String,
+    businessBio: String,
+    characterLimit: Number,
+    businessProfileImage: {
+      url: String,
+      verified: { type: Boolean, default: false }
+    },
+    
+    /* CONTACT INFORMATION - ADDITIONAL */
+    businessEmail: String,
+    businessPhone: String,
+    alternatePhone: String,
+    
+    /* SOCIAL MEDIA - ADDITIONAL */
+    twitter: String,
+    
+    /* ADDITIONAL DOCUMENTS & LINKS */
+    refundPolicyDocument: {
+      url: String,
+      verified: { type: Boolean, default: false }
+    },
+    termsDocument: {
+      url: String,
+      verified: { type: Boolean, default: false }
+    },
+    googleReviewLink: String,
+    communityServiceLink: String,
+
   },
   { timestamps: true }
 );

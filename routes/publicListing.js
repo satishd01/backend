@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const { getAllServices, getServiceBySlug, getAllProducts, getAllFood, getProductById} = require('../controllers/publicListing');
-const { listProductsRanked } = require('../controllers/productListingController');
+const { getAllServices, getServiceBySlug, getAllProducts,getProductsByFilters, getAllFood, getProductById} = require('../controllers/publicListing');
+const { listProductsRanked  } = require('../controllers/productListingController');
 const attachSimilarQuery = require('../middlewares/attachSimilarQuery');
 
 
@@ -10,6 +10,8 @@ router.get('/services/list', getAllServices);
 router.get('/services/:slug', getServiceBySlug);
 
 router.get('/products/list', getAllProducts);
+router.get('/products/filters', getProductsByFilters);
+
 router.get('/product/:productId', getProductById);
 
 // router.get('/products/:slug', getProductBySlug);

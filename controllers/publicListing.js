@@ -1,6 +1,7 @@
 const Service = require('../models/Service');
 const Review = require('../models/Review');
 const ServiceCategory = require('../models/ServiceCategory');
+const ServiceSubcategory = require('../models/ServiceSubcategory');
 
 exports.getAllServices = async (req, res) => {
   try {
@@ -10,7 +11,10 @@ exports.getAllServices = async (req, res) => {
       state,
       country,
       minorityType,
-      categorySlug,  // ✅ New category filter
+      categorySlug,
+      categoryId,
+      subcategorySlug,
+      subcategoryId,
       businessId,
       sort,
       openNow,
@@ -18,6 +22,8 @@ exports.getAllServices = async (req, res) => {
       offers,
       page = 1,
       limit = 10,
+      price,
+      badge,
     } = req.query;
 
     const filters = { isPublished: true };
@@ -36,19 +42,48 @@ exports.getAllServices = async (req, res) => {
 
     if (businessId) filters.businessId = businessId;
 
-    // ✅ Category Slug to categoryId conversion
-    if (categorySlug) {
+    // Category filtering - accept both slug and ID
+    if (categoryId) {
+      filters.categoryId = categoryId;
+    } else if (categorySlug) {
       const category = await ServiceCategory.findOne({ slug: categorySlug });
       if (category) {
-        filters['categories.categoryId'] = category._id;
+        filters.categoryId = category._id;
       } else {
-        // If category not found, return empty result
+        return res.json({ success: true, total: 0, page: parseInt(page), totalPages: 0, data: [] });
+      }
+    }
+
+    // Subcategory filtering - accept both slug and ID
+    if (subcategoryId) {
+      filters.subcategoryId = subcategoryId;
+    } else if (subcategorySlug) {
+      const subcategory = await ServiceSubcategory.findOne({ slug: subcategorySlug });
+      if (subcategory) {
+        filters.subcategoryId = subcategory._id;
+      } else {
         return res.json({ success: true, total: 0, page: parseInt(page), totalPages: 0, data: [] });
       }
     }
 
     if (onlineBooking === 'true') filters.features = { $in: ['Online Booking'] };
     if (offers === 'true') filters.features = { $in: ['Offers Available'] };
+
+    // Price filtering
+    if (price) {
+      const priceRange = price.split('-');
+      if (priceRange.length === 2) {
+        const minPrice = parseFloat(priceRange[0]);
+        const maxPrice = parseFloat(priceRange[1]);
+        filters.price = { $gte: minPrice, $lte: maxPrice };
+      }
+    }
+
+    // Badge filtering
+    if (badge) {
+      const badges = Array.isArray(badge) ? badge : [badge];
+      filters.badge = { $in: badges };
+    }
 
     // Sorting
     let sortOption = { createdAt: -1 };
@@ -60,7 +95,7 @@ exports.getAllServices = async (req, res) => {
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const services = await Service.find(filters)
-      .select('title services averageRating totalReviews slug description contact.address coverImage location')
+      .select('title services averageRating totalReviews slug description contact.address coverImage location price badge')
       .sort(sortOption)
       .skip(skip)
       .limit(parseInt(limit));
@@ -121,6 +156,7 @@ exports.getServiceBySlug = async (req, res) => {
 // controllers/publicListing.js
 const Food = require('../models/Food');
 const FoodCategory = require('../models/FoodCategory');
+const FoodSubcategory = require('../models/FoodSubcategory');
 
 exports.getAllFood = async (req, res) => {
   try {
@@ -131,15 +167,20 @@ exports.getAllFood = async (req, res) => {
       country,
       minorityType,
       categorySlug,
+      categoryId,
+      subcategorySlug,
+      subcategoryId,
       businessId,
       sort,
       offers,
       page = 1,
       limit = 10,
       outOfStock = false,
+      price,
+      badge,
     } = req.query;
 
-    const filters = { isPublished: true };  // Ensure we only fetch active food items
+    const filters = { isPublished: true };
 
     // Search filter
     if (search) {
@@ -158,11 +199,25 @@ exports.getAllFood = async (req, res) => {
     // Filter by businessId
     if (businessId) filters.businessId = businessId;
 
-    // Category Slug to categoryId conversion
-    if (categorySlug) {
+    // Category filtering - accept both slug and ID
+    if (categoryId) {
+      filters.categoryId = categoryId;
+    } else if (categorySlug) {
       const category = await FoodCategory.findOne({ slug: categorySlug });
       if (category) {
         filters.categoryId = category._id;
+      } else {
+        return res.json({ success: true, total: 0, page: parseInt(page), totalPages: 0, data: [] });
+      }
+    }
+
+    // Subcategory filtering - accept both slug and ID
+    if (subcategoryId) {
+      filters.subcategoryId = subcategoryId;
+    } else if (subcategorySlug) {
+      const subcategory = await FoodSubcategory.findOne({ slug: subcategorySlug });
+      if (subcategory) {
+        filters.subcategoryId = subcategory._id;
       } else {
         return res.json({ success: true, total: 0, page: parseInt(page), totalPages: 0, data: [] });
       }
@@ -176,6 +231,24 @@ exports.getAllFood = async (req, res) => {
       filters.stockQuantity = { $lte: 0 };  // Assuming stockQuantity tracks available stock
     }
 
+    // Price filtering
+    if (price) {
+      const priceRange = price.split('-');
+      if (priceRange.length === 2) {
+        const minPrice = parseFloat(priceRange[0]);
+        const maxPrice = parseFloat(priceRange[1]);
+        filters.price = { $gte: minPrice, $lte: maxPrice };
+      }
+    } else {
+      filters.price = { $gte: 0, $lte: 200 };
+    }
+
+    // Badge filtering
+    if (badge) {
+      const badges = Array.isArray(badge) ? badge : [badge];
+      filters.badge = { $in: badges };
+    }
+
     // Sorting logic
     let sortOption = { createdAt: -1 };
     if (sort === 'price_asc') sortOption = { price: 1 };
@@ -187,7 +260,7 @@ exports.getAllFood = async (req, res) => {
 
     // Fetching food items based on filters
     const foodItems = await Food.find(filters)
-      .select('title description price slug coverImage')
+      .select('title description price slug coverImage badge')
       .sort(sortOption)
       .skip(skip)
       .limit(parseInt(limit));
@@ -212,6 +285,7 @@ exports.getAllFood = async (req, res) => {
 const ProductVariant = require('../models/ProductVariant');
 const Product = require('../models/Product');
 const ProductCategory = require('../models/ProductCategory');
+const ProductSubcategory = require('../models/ProductSubcategory');
 
 exports.getAllProducts = async (req, res) => {
   try {
@@ -222,12 +296,17 @@ exports.getAllProducts = async (req, res) => {
       country,
       minorityType,
       categorySlug,
+      categoryId,
+      subcategorySlug,
+      subcategoryId,
       businessId,
       sort,
       offers,
       page = 1,
       limit = 10,
       outOfStock = false,
+      price,
+      badge,
     } = req.query;
 
     const filters = { isDeleted: false, isPublished: true };
@@ -245,12 +324,130 @@ exports.getAllProducts = async (req, res) => {
     if (country) filters['address.country'] = { $regex: country, $options: 'i' };
     if (businessId) filters.businessId = businessId;
 
-    if (categorySlug) {
+    // Category filtering - accept both slug and ID
+    if (categoryId) {
+      filters.categoryId = categoryId;
+    } else if (categorySlug) {
       const category = await ProductCategory.findOne({ slug: categorySlug });
       if (category) filters.categoryId = category._id;
       else return res.json({ success: true, total: 0, page: parseInt(page), totalPages: 0, data: [] });
     }
 
+    // Subcategory filtering - accept both slug and ID
+    if (subcategoryId) {
+      filters.subcategoryId = subcategoryId;
+    } else if (subcategorySlug) {
+      const subcategory = await ProductSubcategory.findOne({ slug: subcategorySlug });
+      if (subcategory) filters.subcategoryId = subcategory._id;
+      else return res.json({ success: true, total: 0, page: parseInt(page), totalPages: 0, data: [] });
+    }
+
+    if (offers === 'true') filters.features = { $in: ['Offers Available'] };
+    if (outOfStock === 'true') filters.stockQuantity = { $lte: 0 };
+
+    // Price filtering
+    if (price) {
+      const priceRange = price.split('-');
+      if (priceRange.length === 2) {
+        const minPrice = parseFloat(priceRange[0]);
+        const maxPrice = parseFloat(priceRange[1]);
+        filters.price = { $gte: minPrice, $lte: maxPrice };
+      }
+    } else {
+      // Default price range 0-200 when no price filter provided
+      filters.price = { $gte: 0, $lte: 200 };
+    }
+
+    // Badge filtering
+    if (badge) {
+      const badges = Array.isArray(badge) ? badge : [badge];
+      filters.badge = { $in: badges };
+    }
+
+    let sortOption = { createdAt: -1 };
+    if (sort === 'price_asc') sortOption = { price: 1 };
+    if (sort === 'price_desc') sortOption = { price: -1 };
+    if (sort === 'rating') sortOption = { averageRating: -1 };
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    let products = await Product.find(filters)
+      .select('title description coverImage slug brand categoryId subcategoryId badge price')
+      .sort(sortOption)
+      .skip(skip)
+      .limit(parseInt(limit))
+      .lean();
+
+    const total = await Product.countDocuments(filters);
+    const totalPages = Math.ceil(total / limit);
+
+    res.json({
+      success: true,
+      total,
+      page: parseInt(page),
+      totalPages,
+      data: products,
+    });
+
+  } catch (err) {
+    console.error('Error fetching products:', err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+
+exports.getProductsByFilters = async (req, res) => {
+  try {
+    const {
+      categorySlug,
+      categoryId,
+      subcategorySlug,
+      subcategoryId,
+      search = '',
+      city,
+      state,
+      country,
+      minorityType,
+      businessId,
+      sort,
+      offers,
+      page = 1,
+      limit = 10,
+      outOfStock = false,
+    } = req.query;
+
+    const filters = { isDeleted: false, isPublished: true };
+
+    // Category filtering - accept both slug and ID
+    if (categoryId) {
+      filters.categoryId = categoryId;
+    } else if (categorySlug) {
+      const category = await ProductCategory.findOne({ slug: categorySlug });
+      if (category) filters.categoryId = category._id;
+      else return res.json({ success: true, total: 0, data: [] });
+    }
+
+    // Subcategory filtering - accept both slug and ID
+    if (subcategoryId) {
+      filters.subcategoryId = subcategoryId;
+    } else if (subcategorySlug) {
+      const subcategory = await ProductSubcategory.findOne({ slug: subcategorySlug });
+      if (subcategory) filters.subcategoryId = subcategory._id;
+      else return res.json({ success: true, total: 0, data: [] });
+    }
+
+    if (search) {
+      filters.$or = [
+        { title: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } },
+      ];
+    }
+
+    if (minorityType) filters.minorityType = minorityType;
+    if (city) filters['address.city'] = { $regex: city, $options: 'i' };
+    if (state) filters['address.state'] = { $regex: state, $options: 'i' };
+    if (country) filters['address.country'] = { $regex: country, $options: 'i' };
+    if (businessId) filters.businessId = businessId;
     if (offers === 'true') filters.features = { $in: ['Offers Available'] };
     if (outOfStock === 'true') filters.stockQuantity = { $lte: 0 };
 
@@ -261,52 +458,76 @@ exports.getAllProducts = async (req, res) => {
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    // Fetch and populate variants
+    // First get products without populating variants to avoid ObjectId errors
     let products = await Product.find(filters)
-      .select('title description coverImage variants')
-      .populate({
-        path: 'variants',
-        select: 'color price salePrice sku isPublished isDeleted weightInKg images videos totalReviews averageRating sizes',
-        match: { isPublished: true, isDeleted: false },
-      })
+      .select('title description coverImage variants slug')
       .sort(sortOption)
       .skip(skip)
       .limit(parseInt(limit))
-      .lean(); // Enable manual data cleanup
+      .lean();
+
+    // Manually fetch variants for each product
+    for (let product of products) {
+      if (product.variants && product.variants.length > 0) {
+        // Check if variants are ObjectIds (references) or embedded objects
+        const firstVariant = product.variants[0];
+        if (typeof firstVariant === 'string' || (firstVariant && firstVariant.toString)) {
+          // Variants are references - fetch them
+          try {
+            // Filter out invalid ObjectIds
+            const validVariantIds = product.variants.filter(id => {
+              if (typeof id === 'string') {
+                return /^[0-9a-fA-F]{24}$/.test(id); // Valid ObjectId format
+              }
+              return true;
+            });
+            
+            if (validVariantIds.length > 0) {
+              const variants = await ProductVariant.find({
+                _id: { $in: validVariantIds },
+                isPublished: true,
+                isDeleted: false
+              }).select('color price salePrice sku images videos totalReviews averageRating sizes').lean();
+              
+              product.variants = variants.map(variant => {
+                if (Array.isArray(variant.sizes)) {
+                  variant.sizes = variant.sizes.map(size => ({
+                    ...size,
+                    price: parseFloat(size?.price?.$numberDecimal || size?.price || 0),
+                    salePrice: parseFloat(size?.salePrice?.$numberDecimal || size?.salePrice || 0),
+                  }));
+                }
+                return variant;
+              });
+            } else {
+              product.variants = [];
+            }
+          } catch (variantError) {
+            console.log('Error fetching variants for product:', product._id, variantError.message);
+            product.variants = [];
+          }
+        }
+        // If variants are already embedded objects, keep them as is
+      } else {
+        product.variants = [];
+      }
+    }
 
     // Filter out products with no variants
-    products = products
-      .filter(product => product.variants && product.variants.length > 0)
-      .map(product => {
-        // Convert Decimal128 fields to Number (for frontend)
-        product.variants = product.variants.map(variant => {
-          variant.price = parseFloat(variant.price?.$numberDecimal || 0);
-          variant.salePrice = parseFloat(variant.salePrice?.$numberDecimal || 0);
-          if (Array.isArray(variant.sizes)) {
-            variant.sizes = variant.sizes.map(size => ({
-              ...size,
-              price: parseFloat(size?.price?.$numberDecimal || size?.price || 0),
-              salePrice: parseFloat(size?.salePrice?.$numberDecimal || size?.salePrice || 0),
-            }));
-          }
-          return variant;
-        });
-        return product;
-      });
+    products = products.filter(product => product.variants && product.variants.length > 0);
 
     const total = await Product.countDocuments(filters);
-    const totalPages = Math.ceil(total / limit);
 
     res.json({
       success: true,
       total: products.length,
       page: parseInt(page),
-      totalPages,
+      totalPages: Math.ceil(total / limit),
       data: products,
     });
 
   } catch (err) {
-    console.error('Error fetching products:', err);
+    console.error('Error fetching products by filters:', err);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 };

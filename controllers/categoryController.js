@@ -2,47 +2,75 @@ const FoodCategory = require('../models/FoodCategory');
 const ProductCategory = require('../models/ProductCategory');
 const ServiceCategory = require('../models/ServiceCategory');
 const ProductSubcategory = require('../models/ProductSubcategory');
+const ServiceSubcategory = require('../models/ServiceSubcategory');
+const FoodSubcategory = require('../models/FoodSubcategory');
 
 
-const  getAllCategoriesAdmin = async (req, res) => {
+
+const getAllCategoriesAdmin = async (req, res) => {
   try {
-    // Fetch service and food categories (no subcategories)
+    // Fetch all categories
     const foodCategories = await FoodCategory.find();
     const serviceCategories = await ServiceCategory.find();
-
-    // Fetch product categories
     const productCategories = await ProductCategory.find();
 
-    // Fetch subcategories and group by categoryId
+    // Fetch all subcategories
     const productSubcategories = await ProductSubcategory.find();
+    const serviceSubcategories = await ServiceSubcategory.find();
+    const foodSubcategories = await FoodSubcategory.find();
 
-    const subcategoryMap = {};
-    for (const sub of productSubcategories) {
-      const catId = sub.category.toString();
-      if (!subcategoryMap[catId]) subcategoryMap[catId] = [];
-      subcategoryMap[catId].push({
-        _id: sub._id,
-        name: sub.name,
-        slug: sub.slug,
-        description: sub.description,
-      });
-    }
+    // Create subcategory maps
+    const createSubcategoryMap = (subcategories) => {
+      const map = {};
+      for (const sub of subcategories) {
+        const catId = sub.category.toString();
+        if (!map[catId]) map[catId] = [];
+        map[catId].push({
+          _id: sub._id,
+          name: sub.name,
+          slug: sub.slug,
+          description: sub.description,
+        });
+      }
+      return map;
+    };
 
-    // Add subcategories to each product category
+    const productSubMap = createSubcategoryMap(productSubcategories);
+    const serviceSubMap = createSubcategoryMap(serviceSubcategories);
+    const foodSubMap = createSubcategoryMap(foodSubcategories);
+
+    // Add subcategories to categories
     const productWithSubcategories = productCategories.map((cat) => ({
       _id: cat._id,
       name: cat.name,
       slug: cat.slug,
       description: cat.description,
       img: cat.img,
-      subcategories: subcategoryMap[cat._id.toString()] || [],
+      subcategories: productSubMap[cat._id.toString()] || [],
+    }));
+
+    const serviceWithSubcategories = serviceCategories.map((cat) => ({
+      _id: cat._id,
+      name: cat.name,
+      slug: cat.slug,
+      description: cat.description,
+      img: cat.img,
+      subcategories: serviceSubMap[cat._id.toString()] || [],
+    }));
+
+    const foodWithSubcategories = foodCategories.map((cat) => ({
+      _id: cat._id,
+      name: cat.name,
+      slug: cat.slug,
+      description: cat.description,
+      subcategories: foodSubMap[cat._id.toString()] || [],
     }));
 
     return res.status(200).json({
       success: true,
       data: {
-        foodCategories,
-        serviceCategories,
+        foodCategories: foodWithSubcategories,
+        serviceCategories: serviceWithSubcategories,
         productCategories: productWithSubcategories,
       },
     });
@@ -86,10 +114,7 @@ const getAllCategories = async (req, res) => {
 };
 const getProductCategories = async (req, res) => {
   try {
-    
     const productCategories = await ProductCategory.find();
-    
-
     return res.status(200).json({
       success: true,
       data: {
@@ -101,6 +126,44 @@ const getProductCategories = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: 'Error fetching product categories',
+      error: error.message,
+    });
+  }
+};
+
+const getServiceCategories = async (req, res) => {
+  try {
+    const serviceCategories = await ServiceCategory.find();
+    return res.status(200).json({
+      success: true,
+      data: {
+        serviceCategories,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching service categories:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error fetching service categories',
+      error: error.message,
+    });
+  }
+};
+
+const getFoodCategories = async (req, res) => {
+  try {
+    const foodCategories = await FoodCategory.find();
+    return res.status(200).json({
+      success: true,
+      data: {
+        foodCategories,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching food categories:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Error fetching food categories',
       error: error.message,
     });
   }
@@ -173,4 +236,4 @@ const listSubcategories = async (req, res) => {
 
 
 
-module.exports = { getAllCategoriesAdmin, getAllCategories, getProductCategories, getProductSubcategories,listSubcategories };
+module.exports = { getAllCategoriesAdmin, getAllCategories, getProductCategories, getServiceCategories, getFoodCategories, getProductSubcategories, listSubcategories };

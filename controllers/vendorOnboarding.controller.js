@@ -103,6 +103,7 @@ const validateStage1Payload = (body) => {
 
    ===================================================== */
 
+// updated save draft to handle new fields and preserve existing data
    exports.saveDraft = async (req, res) => {
   try {
     const userId = req.user._id;
@@ -131,21 +132,48 @@ const validateStage1Payload = (body) => {
       });
     }
 
-    // 4️⃣ Map frontend fields to database fields
+    // 4️⃣ Set DEFAULT EMPTY VALUES for NEW fields ONLY if they don't exist
+    // This ensures existing data is preserved and frontend doesn't need changes
+    if (!onboarding.firstName) onboarding.firstName = "";
+    if (!onboarding.lastName) onboarding.lastName = "";
+    if (!onboarding.primaryEmail) onboarding.primaryEmail = "";
+    if (!onboarding.primaryPhone) onboarding.primaryPhone = "";
+    if (!onboarding.language) onboarding.language = "";
+    if (!onboarding.licenseNumber) onboarding.licenseNumber = "";
+    if (!onboarding.businessBio) onboarding.businessBio = "";
+    if (!onboarding.characterLimit) onboarding.characterLimit = 0;
+    if (!onboarding.businessProfileImage) {
+      onboarding.businessProfileImage = { url: "", verified: false };
+    }
+    if (!onboarding.businessEmail) onboarding.businessEmail = "";
+    if (!onboarding.businessPhone) onboarding.businessPhone = "";
+    if (!onboarding.alternatePhone) onboarding.alternatePhone = "";
+    if (!onboarding.twitter) onboarding.twitter = "";
+    if (!onboarding.refundPolicyDocument) {
+      onboarding.refundPolicyDocument = { url: "", verified: false };
+    }
+    if (!onboarding.termsDocument) {
+      onboarding.termsDocument = { url: "", verified: false };
+    }
+    if (!onboarding.googleReviewLink) onboarding.googleReviewLink = "";
+    if (!onboarding.communityServiceLink) onboarding.communityServiceLink = "";
+
+    // 5️⃣ Map EXISTING frontend fields to database fields (NO CHANGES HERE)
     const mappedPayload = {
       ...payload,
-      // Map URL fields
-      website: payload.websiteUrl,
-      facebook: payload.facebookUrl,
-      instagram: payload.instagramUrl,
-      linkedin: payload.linkedinUrl,
-      tiktok: payload.tiktokUrl,
       
-      // Map other fields
-      ownershipType: payload.businessOwnershipType,
-      employeesCount: payload.numberOfEmployees,
-      secondaryBusinessEmail: payload.businessEmail,
-      usesThirdPartyBooking: payload.hasThirdPartyBooking,
+      // Map URL fields - ONLY if they exist in payload
+      ...(payload.websiteUrl !== undefined && { website: payload.websiteUrl }),
+      ...(payload.facebookUrl !== undefined && { facebook: payload.facebookUrl }),
+      ...(payload.instagramUrl !== undefined && { instagram: payload.instagramUrl }),
+      ...(payload.linkedinUrl !== undefined && { linkedin: payload.linkedinUrl }),
+      ...(payload.tiktokUrl !== undefined && { tiktok: payload.tiktokUrl }),
+      
+      // Map other fields - ONLY if they exist in payload
+      ...(payload.businessOwnershipType !== undefined && { ownershipType: payload.businessOwnershipType }),
+      ...(payload.numberOfEmployees !== undefined && { employeesCount: payload.numberOfEmployees }),
+      ...(payload.businessEmail !== undefined && { secondaryBusinessEmail: payload.businessEmail }),
+      ...(payload.hasThirdPartyBooking !== undefined && { usesThirdPartyBooking: payload.hasThirdPartyBooking }),
       
       // Remove frontend-only fields
       websiteUrl: undefined,
@@ -161,11 +189,17 @@ const validateStage1Payload = (body) => {
       contactPhone: undefined
     };
 
-    // Apply mapped fields
-    Object.assign(onboarding, mappedPayload);
+    // 6️⃣ Apply ONLY the mapped fields that exist in payload
+    // This ensures we don't overwrite existing data with undefined
+    Object.keys(mappedPayload).forEach(key => {
+      if (mappedPayload[key] !== undefined) {
+        onboarding[key] = mappedPayload[key];
+      }
+    });
+
     onboarding.status = "draft"; 
 
-    // 5️⃣ Save document
+    // 7️⃣ Save document
     await onboarding.save();
 
     return res.status(200).json({
@@ -182,8 +216,7 @@ const validateStage1Payload = (body) => {
   }
 };
 
-
-// exports.saveDraft = async (req, res) => {
+//  exports.saveDraft = async (req, res) => {
 //   try {
 //     const userId = req.user._id;
 //     const payload = req.body;
@@ -211,12 +244,41 @@ const validateStage1Payload = (body) => {
 //       });
 //     }
 
-//     // 4️⃣ Apply incoming draft fields safely
-//     Object.assign(onboarding, payload);
+//     // 4️⃣ Map frontend fields to database fields
+//     const mappedPayload = {
+//       ...payload,
+//       // Map URL fields
+//       website: payload.websiteUrl,
+//       facebook: payload.facebookUrl,
+//       instagram: payload.instagramUrl,
+//       linkedin: payload.linkedinUrl,
+//       tiktok: payload.tiktokUrl,
+      
+//       // Map other fields
+//       ownershipType: payload.businessOwnershipType,
+//       employeesCount: payload.numberOfEmployees,
+//       secondaryBusinessEmail: payload.businessEmail,
+//       usesThirdPartyBooking: payload.hasThirdPartyBooking,
+      
+//       // Remove frontend-only fields
+//       websiteUrl: undefined,
+//       facebookUrl: undefined,
+//       instagramUrl: undefined,
+//       linkedinUrl: undefined,
+//       tiktokUrl: undefined,
+//       businessOwnershipType: undefined,
+//       numberOfEmployees: undefined,
+//       businessEmail: undefined,
+//       hasThirdPartyBooking: undefined,
+//       contactEmail: undefined,
+//       contactPhone: undefined
+//     };
 
+//     // Apply mapped fields
+//     Object.assign(onboarding, mappedPayload);
 //     onboarding.status = "draft"; 
 
-//     // 5️⃣ Save document (pre-save hooks fire)
+//     // 5️⃣ Save document
 //     await onboarding.save();
 
 //     return res.status(200).json({
@@ -232,6 +294,7 @@ const validateStage1Payload = (body) => {
 //     });
 //   }
 // };
+
 
 
 /* =====================================================
@@ -255,6 +318,295 @@ exports.getDraft = async (req, res) => {
     });
   }
 };
+
+//get onbaording data for the buisness completetion setup 
+
+exports.getOnboardingData = async (req, res) => {
+  try {
+    const onboarding = await VendorOnboarding.findOne({
+      userId: req.user._id,
+    });
+
+    if (!onboarding) {
+      return res.status(404).json({
+        success: false,
+        message: "No onboarding data found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: onboarding, // Returns complete onboarding document
+    });
+  } catch (error) {
+    console.error("Error fetching onboarding data:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch onboarding data",
+    });
+  }
+};
+
+
+/**
+ * Update entire business profile (PUT)
+ * This updates ALL fields - NO STATUS CHECKS
+ */
+
+exports.updateBusinessProfile = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const payload = req.body;
+
+    // Load models
+    const Business = require('../models/Business');
+    const Subscription = require('../models/Subscription');
+    const VendorOnboarding = require('../models/VendorOnboardingStage1');
+
+    // 1️⃣ Check existing onboarding
+    let onboarding = await VendorOnboarding.findOne({ userId });
+
+    if (!onboarding) {
+      return res.status(404).json({
+        success: false,
+        message: "No onboarding draft found. Please save draft first.",
+      });
+    }
+
+    // 2️⃣ Update onboarding with payload
+    Object.keys(payload).forEach(key => {
+      if (payload[key] !== undefined) {
+        onboarding[key] = payload[key];
+      }
+    });
+    await onboarding.save();
+
+    // ========== SIMPLE BUSINESS SYNC ==========
+    try {
+      // Get active subscription
+      const subscription = await Subscription.findOne({ 
+        userId, 
+        status: 'active' 
+      }).sort({ createdAt: -1 });
+
+      // Find or create business
+      let business = await Business.findOne({ owner: userId });
+
+      // ONLY THESE FIELDS - SIMPLE & CLEAN
+      const businessData = {
+        businessName: onboarding.businessName,
+        description: onboarding.businessBio,
+        logo: onboarding.businessProfileImage?.url,
+        email: onboarding.businessEmail || onboarding.secondaryBusinessEmail,
+        phone: onboarding.businessPhone || onboarding.primaryPhone,
+        listingType: onboarding.businessType || 'product',
+        
+        // Subscription reference (important for limits)
+        subscriptionId: subscription?._id || null,
+        subscriptionPlanId: subscription?.subscriptionPlanId || null,
+        subscriptionStatus: subscription?.status || 'inactive',
+      };
+
+      if (!business) {
+        // Create new business
+        business = new Business({
+          owner: userId,
+          ...businessData,
+          isApproved: false,
+          isActive: true,
+          usage: {
+            totalProducts: 0,
+            totalServices: 0,
+            totalFoods: 0,
+            totalImages: 0,
+          },
+          products: [],
+          services: [],
+          foods: [],
+        });
+      } else {
+        // Update existing business
+        business.businessName = businessData.businessName;
+        business.description = businessData.description;
+        business.logo = businessData.logo;
+        business.email = businessData.email;
+        business.phone = businessData.phone;
+        business.listingType = businessData.listingType;
+        business.subscriptionId = businessData.subscriptionId;
+        business.subscriptionPlanId = businessData.subscriptionPlanId;
+        business.subscriptionStatus = businessData.subscriptionStatus;
+        
+        // CRITICAL: Remove location field to prevent geo index error
+        if (business.location) {
+          business.location = undefined;
+        }
+      }
+
+      await business.save();
+      console.log(`✅ Business data saved for user ${userId}`);
+
+    } catch (businessError) {
+      console.log('⚠️ Business sync issue:', businessError.message);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Profile updated successfully",
+      data: onboarding,
+    });
+
+  } catch (error) {
+    console.error("❌ Update error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update profile",
+    });
+  }
+};
+
+
+// exports.updateBusinessProfile = async (req, res) => {
+//   try {
+//     const userId = req.user._id;
+//     const payload = req.body;
+
+//     // 1️⃣ Check existing onboarding
+//     let onboarding = await VendorOnboarding.findOne({ userId });
+
+//     // 2️⃣ Return error if no draft exists
+//     if (!onboarding) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "No onboarding draft found. Please save draft first.",
+//       });
+//     }
+
+//     // ✅ NO STATUS CHECKS - Always allow updates
+
+//     // 3️⃣ Map ALL fields from payload to database fields
+//     const mappedPayload = {
+//       ...payload,
+      
+//       // Map URL fields
+//       ...(payload.website !== undefined && { website: payload.website }),
+//       ...(payload.facebook !== undefined && { facebook: payload.facebook }),
+//       ...(payload.instagram !== undefined && { instagram: payload.instagram }),
+//       ...(payload.twitter !== undefined && { twitter: payload.twitter }),
+//       ...(payload.linkedin !== undefined && { linkedin: payload.linkedin }),
+//       ...(payload.tiktok !== undefined && { tiktok: payload.tiktok }),
+      
+//       // Map business profile fields
+//       ...(payload.firstName !== undefined && { firstName: payload.firstName }),
+//       ...(payload.lastName !== undefined && { lastName: payload.lastName }),
+//       ...(payload.primaryEmail !== undefined && { primaryEmail: payload.primaryEmail }),
+//       ...(payload.primaryPhone !== undefined && { primaryPhone: payload.primaryPhone }),
+//       ...(payload.language !== undefined && { language: payload.language }),
+      
+//       // Business Information
+//       ...(payload.licenseNumber !== undefined && { licenseNumber: payload.licenseNumber }),
+//       ...(payload.businessBio !== undefined && { businessBio: payload.businessBio }),
+//       ...(payload.characterLimit !== undefined && { characterLimit: payload.characterLimit }),
+//       ...(payload.businessProfileImage !== undefined && { businessProfileImage: payload.businessProfileImage }),
+      
+//       // Contact Information
+//       ...(payload.businessEmail !== undefined && { businessEmail: payload.businessEmail }),
+//       ...(payload.businessPhone !== undefined && { businessPhone: payload.businessPhone }),
+//       ...(payload.alternatePhone !== undefined && { alternatePhone: payload.alternatePhone }),
+      
+//       // Additional Documents
+//       ...(payload.refundPolicyDocument !== undefined && { refundPolicyDocument: payload.refundPolicyDocument }),
+//       ...(payload.termsDocument !== undefined && { termsDocument: payload.termsDocument }),
+//       ...(payload.googleReviewLink !== undefined && { googleReviewLink: payload.googleReviewLink }),
+//       ...(payload.communityServiceLink !== undefined && { communityServiceLink: payload.communityServiceLink }),
+//     };
+
+//     // 4️⃣ Apply ONLY the mapped fields that exist in payload
+//     Object.keys(mappedPayload).forEach(key => {
+//       if (mappedPayload[key] !== undefined) {
+//         onboarding[key] = mappedPayload[key];
+//       }
+//     });
+
+//     // 5️⃣ Keep EXISTING status - DON'T change it
+//     // onboarding.status = "draft"; // ❌ REMOVED - don't change status
+
+//     // 6️⃣ Save document
+//     await onboarding.save();
+
+//     return res.status(200).json({
+//       success: true,
+//       message: "Business profile updated successfully",
+//       data: onboarding,
+//     });
+
+//   } catch (error) {
+//     console.error("Update business profile error:", error);
+//     return res.status(500).json({
+//       success: false,
+//       message: "Failed to update business profile",
+//     });
+//   }
+// };
+
+/**
+ * Patch business profile - NO STATUS CHECKS
+ */
+exports.patchBusinessProfile = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const payload = req.body;
+
+    // 1️⃣ Check existing onboarding
+    let onboarding = await VendorOnboarding.findOne({ userId });
+
+    // 2️⃣ Return error if no draft exists
+    if (!onboarding) {
+      return res.status(404).json({
+        success: false,
+        message: "No onboarding draft found. Please save draft first.",
+      });
+    }
+
+    // ✅ NO STATUS CHECKS - Always allow updates
+
+    // 3️⃣ Allowed fields for PATCH update
+    const allowedFields = [
+      'firstName', 'lastName', 'primaryEmail', 'primaryPhone', 'language',
+      'licenseNumber', 'businessBio', 'characterLimit', 'businessProfileImage',
+      'businessEmail', 'businessPhone', 'alternatePhone',
+      'website', 'facebook', 'instagram', 'twitter', 'linkedin', 'tiktok',
+      'refundPolicyDocument', 'termsDocument', 'googleReviewLink', 'communityServiceLink'
+    ];
+
+    // 4️⃣ Only update allowed fields that exist in payload
+    allowedFields.forEach(field => {
+      if (payload[field] !== undefined) {
+        onboarding[field] = payload[field];
+      }
+    });
+
+    // 5️⃣ Keep EXISTING status - DON'T change it
+    // onboarding.status = "draft"; // ❌ REMOVED
+
+    // 6️⃣ Save document
+    await onboarding.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Business profile updated successfully",
+      data: onboarding,
+    });
+
+  } catch (error) {
+    console.error("Patch business profile error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update business profile",
+    });
+  }
+};
+
+
 
 //payment controllers
 // exports.createVerificationPayment = async (req, res) => {
@@ -347,28 +699,29 @@ exports.createVerificationPayment = async (req, res) => {
       });
     }
 
-    // Create Stripe Payment Intent
+    // Create Stripe Payment Intent - $24.99 = 2499 cents
     const paymentIntent = await stripe.paymentIntents.create({
-      amount: 2499, // $24.99 in cents
+      amount: 2499, // ✅ $24.99 in cents (Stripe expects cents)
       currency: 'usd',
       metadata: {
         userId: userId.toString(),
         type: 'vendor_verification',
         applicationId: onboarding.applicationId || 'N/A'
       },
-      description: 'Vendor Onboarding Verification Fee'
+      description: 'Vendor Onboarding Verification Fee - $24.99'
     });
 
-    // Update onboarding record with payment intent
+    // Update onboarding record with payment intent - CONSISTENT amount
     onboarding.verificationPayment = {
       provider: 'stripe',
       paymentIntentId: paymentIntent.id,
-      amount: 2400,
+      amount: 24.99, // ✅ Store in dollars for readability in DB
+      amount_cents: 2499, // ✅ Optional: store both for clarity
       currency: 'usd',
       status: 'paid', // Auto-mark as paid for testing
-      paidAt: new Date() // Set paid timestamp
+      paidAt: new Date()
     };
-    onboarding.status = 'draft'; // Set to draft so user can submit
+    onboarding.status = 'draft';
 
     await onboarding.save();
 
@@ -377,9 +730,10 @@ exports.createVerificationPayment = async (req, res) => {
       message: "Payment intent created and auto-paid for testing",
       data: {
         clientSecret: paymentIntent.client_secret,
-        amount: 2400,
+        amount: 24.99, // ✅ Send dollars to frontend for display
+        amount_cents: 2499, // ✅ Optional: send cents if frontend needs it
         currency: 'usd',
-        status: 'paid' // Return paid status
+        status: 'paid'
       }
     });
 
@@ -683,21 +1037,24 @@ exports.markPaymentAsPaid = async (req, res) => {
   }
 };
 
-
-// Get status by application ID
- // Add this function to vendorOnboarding.controller.js
-
-// Get status by application ID
 exports.getStatusByApplicationId = async (req, res) => {
   try {
     const { applicationId } = req.params;
-    
-    // Get all related data
+
+    if (!applicationId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Application ID is required'
+      });
+    }
+
+    // Load models
     const Subscription = require('../models/Subscription');
-    const BusinessProfile = require('../models/BusinessProfile');
-    
+    const VendorOnboarding = require('../models/VendorOnboardingStage1');
+
+    // Fetch onboarding application - THIS CONTAINS ALL BUSINESS PROFILE DATA
     const onboarding = await VendorOnboarding.findOne({ applicationId });
-    
+
     if (!onboarding) {
       return res.status(404).json({
         success: false,
@@ -705,49 +1062,85 @@ exports.getStatusByApplicationId = async (req, res) => {
       });
     }
 
-    const [subscription, businessProfile] = await Promise.all([
-      Subscription.findOne({ userId: onboarding.userId, status: 'active' }).populate('subscriptionPlanId'),
-      BusinessProfile.findOne({ userId: onboarding.userId })
-    ]);
+    const userId = onboarding.userId;
 
-    // Determine current status
+    // Fetch subscription only - Business Profile data is in onboarding
+    const subscription = await Subscription.findOne({ userId })
+      .sort({ createdAt: -1 })
+      .populate('subscriptionPlanId');
+
+    // ✅ Check logo and bio directly from onboarding document
+    const hasLogo = onboarding.businessProfileImage?.url && 
+                   onboarding.businessProfileImage.url.trim() !== '';
+    
+    const hasBio = onboarding.businessBio && 
+                   onboarding.businessBio.trim() !== '';
+
+    // Initialize default response
     let currentStage = 1;
     let status = 'Stage 1 - Document Verification';
     let nextAction = '';
 
-    if (onboarding.status === 'draft') {
-      status = 'Stage 1 - Draft (Not Submitted)';
-      nextAction = 'Submit application for review';
-    } else if (onboarding.status === 'submitted') {
-      status = 'Stage 1 - Under Admin Review';
-      nextAction = 'Wait for admin verification (24-48 hours)';
-    } else if (onboarding.status === 'verified') {
-      currentStage = 2;
-      if (!subscription) {
-        status = 'Stage 2 - Select Subscription Plan';
-        nextAction = 'Congrats Your Apllication verified And You Qalify For Nextstep Choose and pay for subscription tier';
-      } else {
-        currentStage = 3;
-        if (!businessProfile) {
-          status = 'Stage 3 - Complete Business Profile';
-          nextAction = 'Fill out business profile and questions';
-        } else if (businessProfile.status === 'draft') {
-          status = 'Stage 3 - Business Profile Draft';
-          nextAction = 'Submit business profile for review';
-        } else if (businessProfile.status === 'submitted') {
-          status = 'Stage 3 - Business Profile Under Review';
-          nextAction = 'Wait for business profile verification';
-        } else if (businessProfile.status === 'approved') {
-          currentStage = 4;
-          status = 'Onboarding Complete!';
-          nextAction = 'Start using the platform';
+    // Stage 1 - Onboarding Status
+    switch (onboarding.status) {
+      case 'draft':
+        status = 'Stage 1 - Draft (Not Submitted)';
+        nextAction = 'Submit application for review';
+        break;
+
+      case 'submitted':
+        status = 'Stage 1 - Under Admin Review';
+        nextAction = 'Wait for admin verification (24-48 hours)';
+        break;
+
+      case 'verified':
+        currentStage = 2;
+
+        // Stage 2 - Subscription
+        if (!subscription) {
+          status = 'Stage 2 - Select Subscription Plan';
+          nextAction = 'Your application is verified. Choose and pay for a subscription plan';
+        } else {
+          // Subscription exists, check its status
+          if (subscription.status === 'pending') {
+            status = 'Stage 2 - Payment Pending';
+            nextAction = 'Complete your subscription payment';
+          } else if (subscription.status === 'active') {
+            currentStage = 3;
+
+            // ✅ STAGE 3 - Business Profile (Data is in onboarding document)
+            // Check if logo AND bio exist
+            if (hasLogo && hasBio) {
+              // ✅ PROFILE COMPLETE - Move to Stage 4 immediately
+              currentStage = 4;
+              status = '✅ Onboarding Complete!';
+              nextAction = 'Proceed with product/service/food upload';
+            } else {
+              // ❌ PROFILE INCOMPLETE
+              status = 'Stage 3 - Business Profile Incomplete';
+              nextAction = 'Please add your business logo and bio to continue';
+              
+              const missingItems = [];
+              if (!hasLogo) missingItems.push('logo');
+              if (!hasBio) missingItems.push('bio');
+              nextAction += ` (Missing: ${missingItems.join(', ')})`;
+            }
+          } else {
+            status = 'Stage 2 - Subscription Issue';
+            nextAction = 'Contact support for subscription assistance';
+          }
         }
-      }
-    } else if (onboarding.status === 'rejected') {
-      status = 'Stage 1 - Rejected';
-      nextAction = 'Your Application Is Rejected Due To  Not Qualified Our  Verification Criteria ,  Our Team Will Contact You For Further Assistance Thank You ';
-    } else if (onboarding.status === 'payment_pending') {
-      status = 'Stage  assistance';
+        break;
+
+      case 'rejected':
+        status = 'Stage 1 - Rejected';
+        nextAction = 'Your application did not meet verification criteria. Our team will contact you for further assistance.';
+        break;
+
+      default:
+        status = 'Stage 1 - Unknown Status';
+        nextAction = 'Contact support for assistance';
+        break;
     }
 
     return res.json({
@@ -766,30 +1159,200 @@ exports.getStatusByApplicationId = async (req, res) => {
             paymentStatus: onboarding.verificationPayment?.status || 'not_started'
           },
           stage2: {
-            status: subscription ? 'completed' : 'pending',
-            plan: subscription?.subscriptionPlanId?.name,
-            amount: subscription?.subscriptionPlanId?.price,
-            subscribedAt: subscription?.createdAt
+            status: subscription?.status || 'not_started',
+            plan: subscription?.subscriptionPlanId?.name || null,
+            amount: subscription?.subscriptionPlanId?.price || null,
+            subscribedAt: subscription?.createdAt || null
           },
           stage3: {
-            status: businessProfile?.status || 'not_started',
-            badge: businessProfile?.badge,
-            totalPoints: businessProfile?.totalPoints || 0,
-            submittedAt: businessProfile?.submittedAt,
-            approvedAt: businessProfile?.finalizedAt
+            // ✅ Use onboarding data directly
+            status: hasLogo && hasBio ? 'completed' : 'in_progress',
+            badge: null,
+            totalPoints: 0,
+            isComplete: hasLogo && hasBio,
+            hasLogo: hasLogo,
+            hasBio: hasBio,
+            businessName: onboarding.businessName || null,
+            businessEmail: onboarding.businessEmail || onboarding.secondaryBusinessEmail || null,
+            businessPhone: onboarding.businessPhone || onboarding.primaryPhone || null,
+            businessBio: onboarding.businessBio || null,
+            logo: onboarding.businessProfileImage?.url || null
+          },
+          stage4: {
+            status: currentStage === 4 ? 'ready' : 'locked',
+            message: currentStage === 4 
+              ? 'Start listing your products/services' 
+              : 'Complete previous stages first'
           }
         }
       }
     });
-
   } catch (error) {
     console.error('Get status by application ID error:', error);
     return res.status(500).json({
       success: false,
-      message: 'Failed to get application status'
+      message: 'Failed to get application status',
+      error: error.message
     });
   }
 };
+
+// Get status by application ID
+// exports.getStatusByApplicationId = async (req, res) => {
+//   try {
+//     const { applicationId } = req.params;
+
+//     if (!applicationId) {
+//       return res.status(400).json({
+//         success: false,
+//         message: 'Application ID is required'
+//       });
+//     }
+
+//     // Load models
+//     const Subscription = require('../models/Subscription');
+//     const BusinessProfile = require('../models/BusinessProfile');
+//     const VendorOnboarding = require('../models/VendorOnboardingStage1');
+
+//     // Fetch onboarding application
+//     const onboarding = await VendorOnboarding.findOne({ applicationId });
+
+//     if (!onboarding) {
+//       return res.status(404).json({
+//         success: false,
+//         message: 'Application not found'
+//       });
+//     }
+
+//     const userId = onboarding.userId;
+
+//     // Fetch subscription and business profile in parallel
+//     const [subscription, businessProfile] = await Promise.all([
+//       Subscription.findOne({ userId }).sort({ createdAt: -1 }).populate('subscriptionPlanId'),
+//       BusinessProfile.findOne({ userId })
+//     ]);
+
+//     // Initialize default response
+//     let currentStage = 1;
+//     let status = 'Stage 1 - Document Verification';
+//     let nextAction = '';
+
+//     // Stage 1 - Onboarding Status
+//     switch (onboarding.status) {
+//       case 'draft':
+//         status = 'Stage 1 - Draft (Not Submitted)';
+//         nextAction = 'Submit application for review';
+//         break;
+
+//       case 'submitted':
+//         status = 'Stage 1 - Under Admin Review';
+//         nextAction = 'Wait for admin verification (24-48 hours)';
+//         break;
+
+//       case 'verified':
+//         currentStage = 2;
+
+//         // Stage 2 - Subscription
+//         if (!subscription) {
+//           status = 'Stage 2 - Select Subscription Plan';
+//           nextAction = 'Your application is verified. Choose and pay for a subscription plan';
+//         } else {
+//           // Subscription exists, check its status
+//           if (subscription.status === 'pending') {
+//             status = 'Stage 2 - Payment Pending';
+//             nextAction = 'Complete your subscription payment';
+//           } else if (subscription.status === 'active') {
+//             currentStage = 3;
+
+//             // Stage 3 - Business Profile
+//             if (!businessProfile) {
+//               status = 'Stage 3 - Complete Business Profile';
+//               nextAction = 'Fill out business profile and questions';
+//             } else {
+//               switch (businessProfile.status) {
+//                 case 'draft':
+//                   status = 'Stage 3 - Business Profile Draft';
+//                   nextAction = 'Submit business profile for review';
+//                   break;
+
+//                 case 'submitted':
+//                   status = 'Stage 3 - Business Profile Under Review';
+//                   nextAction = 'Wait for business profile verification';
+//                   break;
+
+//                 case 'approved':
+//                   currentStage = 4;
+//                   status = 'Onboarding Complete!';
+//                   nextAction = 'Start using the platform';
+//                   break;
+
+//                 default:
+//                   status = 'Stage 3 - Not Started';
+//                   nextAction = 'Complete your business profile';
+//                   break;
+//               }
+//             }
+//           } else {
+//             // Subscription status is neither pending nor active
+//             status = 'Stage 2 - Subscription Issue';
+//             nextAction = 'Contact support for subscription assistance';
+//           }
+//         }
+//         break;
+
+//       case 'rejected':
+//         status = 'Stage 1 - Rejected';
+//         nextAction =
+//           'Your application did not meet verification criteria. Our team will contact you for further assistance.';
+//         break;
+
+//       default:
+//         status = 'Stage 1 - Unknown Status';
+//         nextAction = 'Contact support for assistance';
+//         break;
+//     }
+
+//     return res.json({
+//       success: true,
+//       data: {
+//         applicationId,
+//         businessName: onboarding.businessName,
+//         currentStage,
+//         status,
+//         nextAction,
+//         details: {
+//           stage1: {
+//             status: onboarding.status,
+//             points: onboarding.totalVerificationPoints || 0,
+//             submittedAt: onboarding.submittedAt,
+//             paymentStatus: onboarding.verificationPayment?.status || 'not_started'
+//           },
+//           stage2: {
+//             status: subscription?.status || 'not_started',
+//             plan: subscription?.subscriptionPlanId?.name || null,
+//             amount: subscription?.subscriptionPlanId?.price || null,
+//             subscribedAt: subscription?.createdAt || null
+//           },
+//           stage3: {
+//             status: businessProfile?.status || 'not_started',
+//             badge: businessProfile?.badge || null,
+//             totalPoints: businessProfile?.totalPoints || 0,
+//             submittedAt: businessProfile?.submittedAt || null,
+//             approvedAt: businessProfile?.finalizedAt || null
+//           }
+//         }
+//       }
+//     });
+//   } catch (error) {
+//     console.error('Get status by application ID error:', error);
+//     return res.status(500).json({
+//       success: false,
+//       message: 'Failed to get application status',
+//       error: error.message
+//     });
+//   }
+// };
+
 
 
 exports.getApplicationId = async (req, res) => {

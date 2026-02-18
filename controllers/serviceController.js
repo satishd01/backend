@@ -4,36 +4,37 @@ const Subscription = require('../models/Subscription');
 const SubscriptionPlan = require('../models/SubscriptionPlan');
 const PendingImage = require('../models/PendingImage');
 const deleteCloudinaryFile = require('../utils/deleteCloudinaryFile');
+const { S3Client } = require('@aws-sdk/client-s3');
+const { PutObjectCommand } = require("@aws-sdk/client-s3");
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 
 require('../models/ServiceCategory');
 require('../models/ServiceSubcategory');
-const { geocodeAddress } = require('../utils/geocode'); // You must create this helper
 
-
+const s3Client = new S3Client({
+  region: process.env.AWS_REGION,
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  },
+});
 
 exports.createService = async (req, res) => {
   const session = await Service.startSession();
   session.startTransaction();
+  
   try {
     const {
-      title,
-      description,
-      price,
-      duration,
+      categoryId,
+      subcategoryId,
+      businessId,
+      bookingToolLink,
       services,
-      categories,
       coverImage,
       images,
-      features,
-      amenities,
       businessHours,
       location,
-      contact,
-      faq,
-      videos,
       isPublished,
-      maxBookingsPerSlot,
-      businessId, // Sent from frontend
     } = req.body;
 
     const userId = req.user._id;
@@ -51,12 +52,10 @@ exports.createService = async (req, res) => {
 
     // 📅 Step 2: Subscription check
     const subscription = await Subscription.findOne({
-      _id: business.subscriptionId,
-      businessId,
+      userId: userId,
       status: 'active',
-      paymentStatus: 'COMPLETED',
       endDate: { $gte: new Date() },
-    });
+    }).sort({ createdAt: -1 });
 
     if (!subscription)
       return res.status(403).json({ error: 'Valid subscription not found.' });
@@ -72,66 +71,50 @@ exports.createService = async (req, res) => {
       });
     }
 
-    // 📍 Step 3: Prepare coordinates (handle [0,0] as missing)
-    let finalCoordinates;
-
-    const rawCoords = Array.isArray(location?.coordinates) ? location.coordinates : null;
-    const hasTwo = rawCoords && rawCoords.length === 2 && rawCoords.every(n => Number.isFinite(Number(n)));
-    const isZero = hasTwo && Number(rawCoords[0]) === 0 && Number(rawCoords[1]) === 0;
-
-    if (hasTwo && !isZero) {
-      // Already have valid non-zero coordinates (assume tracked mode)
-      finalCoordinates = [Number(rawCoords[0]), Number(rawCoords[1])];
-    } else {
-      // Manual entry path → we must geocode the address
-      if (!contact?.address?.trim()) {
-        return res.status(400).json({
-          error: 'Contact address is required when coordinates are missing or [0,0].'
-        });
-      }
-
-      const geo = await geocodeAddress(contact.address.trim());
-      if (!geo || typeof geo.lat !== 'number' || typeof geo.lng !== 'number') {
-        return res.status(422).json({
-          error: 'Unable to geocode the provided address. Please verify the address and try again.'
-        });
-      }
-
-      // GeoJSON order: [lng, lat]
-      finalCoordinates = [geo.lng, geo.lat];
-    }
-
-    // ✅ Step 4: Save service
+    // ✅ Step 3: Save service with defaults for optional fields
     const service = new Service({
-      title,
-      description,
-      price,
-      duration,
-      services,
-      categories,
-      coverImage,
-      images,
-      isPublished,
-      features,
-      amenities,
-      businessHours,
-      contact,
-      faq,
-      videos,
-      maxBookingsPerSlot,
-      ownerId: userId,
+      // Default values for required fields
+      title: 'Service',
+      description: '',
+      price: 0,
+      duration: '60 minutes',
+      
+      // Your actual data
+      categoryId,
+      subcategoryId,
       businessId,
-      minorityType: business.minorityType,
-      location: {
-        type: 'Point',
-        coordinates: finalCoordinates,
+      bookingToolLink: bookingToolLink || '',
+      services: services || [],
+      coverImage: coverImage || '',
+      images: images || [],
+      isPublished: isPublished || false,
+      businessHours: businessHours || [],
+      location: location?.address || '',
+      
+      // Default contact
+      contact: {
+        phone: '',
+        email: '',
+        address: location?.address || '',
+        website: ''
       },
+      
+      ownerId: userId,
+      minorityType: business.minorityType,
+      maxBookingsPerSlot: 1,
+      features: [],
+      amenities: [],
+      videos: [],
+      faq: []
     });
 
     await service.save();
 
-    const usedImages = [coverImage, ...images];
-    await PendingImage.deleteMany({ url: { $in: usedImages } });
+    // Clean up pending images
+    const usedImages = [coverImage, ...(images || [])].filter(Boolean);
+    if (usedImages.length > 0) {
+      await PendingImage.deleteMany({ url: { $in: usedImages } });
+    }
 
     await session.commitTransaction();
     session.endSession();
@@ -140,37 +123,27 @@ exports.createService = async (req, res) => {
       message: 'Service created successfully.',
       service,
     });
+    
   } catch (err) {
     await session.abortTransaction();
     session.endSession();
 
-    const usedImages = [req.body.coverImage, ...(req.body.images || [])];
+    // Clean up uploaded images on error
+    const usedImages = [req.body.coverImage, ...(req.body.images || [])].filter(Boolean);
     for (const image of usedImages) {
-      await deleteCloudinaryFile(image);
-      await PendingImage.deleteOne({ url: image });
+      await deleteCloudinaryFile(image).catch(() => {});
+      await PendingImage.deleteOne({ url: image }).catch(() => {});
     }
-
-    if (err?.message?.includes('REQUEST_DENIED')) {
-      return res.status(502).json({ error: 'Geocoding denied: check API key/billing/restrictions.' });
-    }
-    if (err?.message?.includes('OVER_QUERY_LIMIT')) {
-      return res.status(429).json({ error: 'Geocoding rate limit reached. Please try again later.' });
-    }
-
 
     console.error('Service creation failed:', err.message);
     return res.status(400).json({ error: err.message || 'Failed to create service' });
   }
 };
 
-
-
-
+// Other functions remain the same but with updated field references
 exports.getMyServices = async (req, res) => {
   try {
     const userId = req.user._id;
-
-    // 🔍 Query params
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const isPublished = req.query.isPublished;
@@ -180,14 +153,11 @@ exports.getMyServices = async (req, res) => {
 
     if (isPublished === 'true') filters.isPublished = true;
     if (isPublished === 'false') filters.isPublished = false;
-
-    if (categoryId) {
-      filters['categories.categoryId'] = categoryId;
-    }
+    if (categoryId) filters.categoryId = categoryId;
 
     const services = await Service.find(filters)
-      .populate('categories.categoryId', 'name') // populate category name
-      .populate('categories.subcategoryIds', 'name') // populate subcategory names
+      .populate('categoryId', 'name')
+      .populate('subcategoryId', 'name')
       .populate('ownerId', 'name email')
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
@@ -208,36 +178,29 @@ exports.getMyServices = async (req, res) => {
   }
 };
 
-
-
-
 exports.deleteService = async (req, res) => {
   try {
     const serviceId = req.params.id;
     const userId = req.user._id;
 
-    // Find service
     const service = await Service.findOne({ _id: serviceId, ownerId: userId });
     if (!service)
       return res.status(404).json({ error: 'Service not found or unauthorized.' });
 
-    // Delete images from Cloudinary
-    const usedImages = [service.coverImage, ...service.images];
+    const usedImages = [service.coverImage, ...service.images].filter(Boolean);
     for (const image of usedImages) {
-      await deleteCloudinaryFile(image);
+      await deleteCloudinaryFile(image).catch(() => {});
     }
 
     await service.deleteOne();
 
     res.status(200).json({ message: 'Service deleted successfully.' });
+    
   } catch (err) {
     console.error('Failed to delete service:', err.message);
     res.status(500).json({ error: 'Failed to delete service.' });
   }
 };
-
-
-
 
 exports.updateService = async (req, res) => {
   try {
@@ -249,61 +212,37 @@ exports.updateService = async (req, res) => {
       return res.status(404).json({ message: 'Service not found' });
     }
 
-    // ✅ Delete old cover image if changed
+    // Handle image updates
     if (req.body.coverImage && req.body.coverImage !== service.coverImage) {
-      await deleteCloudinaryFile(service.coverImage);
+      await deleteCloudinaryFile(service.coverImage).catch(() => {});
     }
 
-    // ✅ Delete removed images
-    if (
-      Array.isArray(req.body.images) &&
-      Array.isArray(service.images)
-    ) {
+    if (Array.isArray(req.body.images) && Array.isArray(service.images)) {
       const removedImages = service.images.filter(img => !req.body.images.includes(img));
       for (const image of removedImages) {
-        await deleteCloudinaryFile(image);
+        await deleteCloudinaryFile(image).catch(() => {});
       }
     }
 
-
+    // Update allowed fields
     const updatableFields = [
       'title', 'description', 'price', 'duration', 'services', 'isPublished',
-      'categories', 'coverImage', 'images', 'features', 'amenities',
-      'businessHours', 'contact', 'faq', 'videos', 'maxBookingsPerSlot'
+      'coverImage', 'images', 'features', 'amenities', 'businessHours',
+      'bookingToolLink', 'maxBookingsPerSlot', 'location', 'contact'
     ];
 
-    const oldAddr = (service.contact?.address || '').trim();
-    // Update basic fields
     updatableFields.forEach(field => {
       if (req.body[field] !== undefined) {
         service[field] = req.body[field];
       }
     });
 
-    // 📍 Handle location update (coordinates or address)
-    if (typeof req.body?.contact?.address === 'string') {
-      const newAddr = req.body.contact.address.trim();
-      
-      if (newAddr && newAddr !== oldAddr) {
-        const geo = await geocodeAddress(newAddr);
-        if (!geo || typeof geo.lat !== 'number' || typeof geo.lng !== 'number') {
-          return res.status(422).json({ message: 'Unable to geocode the provided address.' });
-        }
-        service.location = { type: 'Point', coordinates: [geo.lng, geo.lat] };
-        // Optional: normalize stored address from geocoder if you prefer
-        // if (geo.formatted) service.contact.address = geo.formatted;
+    // Handle location as string
+    if (req.body.location?.address) {
+      service.location = req.body.location.address;
+      if (service.contact) {
+        service.contact.address = req.body.location.address;
       }
-    }
-
-    // 🔁 Regenerate slug if title changed
-    if (req.body.title && req.body.title !== service.title) {
-      const baseSlug = slugify(req.body.title, { lower: true, strict: true });
-      let slug = baseSlug;
-      let counter = 1;
-      while (await Service.findOne({ slug, _id: { $ne: service._id } })) {
-        slug = `${baseSlug}-${counter++}`;
-      }
-      service.slug = slug;
     }
 
     await service.save();
@@ -312,31 +251,132 @@ exports.updateService = async (req, res) => {
       message: 'Service updated successfully',
       service
     });
+    
   } catch (error) {
     console.error('Service update error:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 };
 
-
-
-
 exports.getServiceById = async (req, res) => {
   try {
     const userId = req.user._id;
     const serviceId = req.params.id;
 
-    const service = await Service.findOne({ _id: serviceId, ownerId: userId })
-      .populate('categories.categoryId', 'name')
+    const service = await Service.findOne({
+      _id: serviceId,
+      ownerId: userId
+    })
+      .populate('categoryId', 'name')
+      .populate('subcategoryId', 'name')
       .populate('ownerId', 'name email');
 
     if (!service) {
-      return res.status(404).json({ message: 'Service not found or unauthorized.' });
+      return res.status(404).json({
+        message: 'Service not found or unauthorized.'
+      });
     }
 
     res.status(200).json({ service });
+
   } catch (err) {
     console.error('Failed to fetch service:', err.message);
-    res.status(500).json({ message: 'Internal server error' });
+    res.status(500).json({
+      message: 'Internal server error'
+    });
+  }
+};
+
+
+
+exports.getServiceUploadUrl = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { fileName, fileType, documentType, serviceId } = req.query;
+
+    if (!fileName || !fileType || !documentType) {
+      return res.status(400).json({
+        message: "fileName, fileType, and documentType are required",
+      });
+    }
+
+    // Allowed service image types
+    const allowedDocTypes = [
+      "service-cover",     // Main service cover/banner image
+      "service-gallery"    // Service gallery images
+    ];
+
+    if (!allowedDocTypes.includes(documentType)) {
+      return res.status(400).json({
+        message: "Invalid document type. Allowed: service-cover, service-gallery",
+      });
+    }
+
+    // Validate file type (images only)
+    const allowedMimeTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+    if (!allowedMimeTypes.includes(fileType)) {
+      return res.status(400).json({
+        message: "Only image files are allowed (JPEG, JPG, PNG, GIF, WEBP)",
+      });
+    }
+
+    const bucketName = process.env.AWS_S3_BUCKET;
+
+    // Organize folder structure based on document type
+    let folderPath;
+    switch (documentType) {
+      case "service-cover":
+        // If serviceId provided, organize in service-specific folder
+        if (serviceId) {
+          folderPath = `services/${userId}/${serviceId}/cover`;
+        } else {
+          folderPath = `services/${userId}/covers/temp`;
+        }
+        break;
+      case "service-gallery":
+        if (serviceId) {
+          folderPath = `services/${userId}/${serviceId}/gallery`;
+        } else {
+          folderPath = `services/${userId}/gallery/temp`;
+        }
+        break;
+      default:
+        folderPath = `services/${userId}/temp`;
+    }
+
+    // Clean filename and add timestamp to prevent collisions
+    const cleanFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
+    const timestamp = Date.now();
+    const key = `${folderPath}/${timestamp}-${cleanFileName}`;
+
+    const command = new PutObjectCommand({
+      Bucket: bucketName,
+      Key: key,
+      ContentType: fileType,
+    });
+
+    const uploadUrl = await getSignedUrl(s3Client, command, {
+      expiresIn: 300, // 5 minutes
+    });
+
+    // Construct public URL
+    const region = process.env.AWS_REGION || 'us-east-1';
+    const fileUrl = `https://${bucketName}.s3.${region}.amazonaws.com/${key}`;
+
+    return res.json({
+      success: true,
+      uploadUrl,
+      fileUrl,
+      documentType,
+      key,
+      expiresIn: 300
+    });
+
+  } catch (error) {
+    console.error("Presigned URL error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to generate upload URL",
+    });
   }
 };
