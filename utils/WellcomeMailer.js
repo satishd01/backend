@@ -69,7 +69,7 @@ exports.sendAdminOnboardingSubmissionEmail = async ({
           awaiting verification.
         </p>
 
-        <a href="https://admin.mosaicbizhub.com/vendor-onboarding/${applicationId}"
+        <a href="https://app.mosaicbizhub.com/m/vendor-onboarding/${applicationId}"
            style="display:inline-block;margin-top:16px;padding:10px 16px;
            background:#0d6efd;color:#fff;text-decoration:none;border-radius:4px;">
            Review Application
