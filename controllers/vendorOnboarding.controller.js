@@ -104,12 +104,14 @@ const validateStage1Payload = (body) => {
    ===================================================== */
 
 // updated save draft to handle new fields and preserve existing data
-   exports.saveDraft = async (req, res) => {
+
+
+exports.saveDraft = async (req, res) => {
   try {
     const userId = req.user._id;
-    const payload = req.body;
+    const payload = { ...req.body }; // copy of frontend data
 
-    // 1️⃣ Check existing onboarding
+    // 1️⃣ Check if onboarding exists
     let onboarding = await VendorOnboarding.findOne({ userId });
 
     // 2️⃣ Lock if already submitted
@@ -120,86 +122,95 @@ const validateStage1Payload = (body) => {
       });
     }
 
-    // 3️⃣ Generate applicationId ONLY once
+    // 3️⃣ Create new onboarding if it doesn't exist
     if (!onboarding) {
       onboarding = new VendorOnboarding({
         userId,
-        applicationId: `MBH-APP-${Date.now()}-${Math.random()
-          .toString(36)
-          .substring(2, 8)
-          .toUpperCase()}`,
         status: "draft",
       });
     }
 
-    // 4️⃣ Set DEFAULT EMPTY VALUES for NEW fields ONLY if they don't exist
-    // This ensures existing data is preserved and frontend doesn't need changes
-    if (!onboarding.firstName) onboarding.firstName = "";
-    if (!onboarding.lastName) onboarding.lastName = "";
-    if (!onboarding.primaryEmail) onboarding.primaryEmail = "";
-    if (!onboarding.primaryPhone) onboarding.primaryPhone = "";
-    if (!onboarding.language) onboarding.language = "";
-    if (!onboarding.licenseNumber) onboarding.licenseNumber = "";
-    if (!onboarding.businessBio) onboarding.businessBio = "";
-    if (!onboarding.characterLimit) onboarding.characterLimit = 0;
-    if (!onboarding.businessProfileImage) {
-      onboarding.businessProfileImage = { url: "", verified: false };
-    }
-    if (!onboarding.businessEmail) onboarding.businessEmail = "";
-    if (!onboarding.businessPhone) onboarding.businessPhone = "";
-    if (!onboarding.alternatePhone) onboarding.alternatePhone = "";
-    if (!onboarding.twitter) onboarding.twitter = "";
-    if (!onboarding.refundPolicyDocument) {
-      onboarding.refundPolicyDocument = { url: "", verified: false };
-    }
-    if (!onboarding.termsDocument) {
-      onboarding.termsDocument = { url: "", verified: false };
-    }
-    if (!onboarding.googleReviewLink) onboarding.googleReviewLink = "";
-    if (!onboarding.communityServiceLink) onboarding.communityServiceLink = "";
+    // 4️⃣ Remove forbidden fields from frontend
+    const forbiddenFields = ["verificationPayment", "status", "applicationId"];
+    forbiddenFields.forEach((field) => delete payload[field]);
 
-    // 5️⃣ Map EXISTING frontend fields to database fields (NO CHANGES HERE)
-    const mappedPayload = {
-      ...payload,
-      
-      // Map URL fields - ONLY if they exist in payload
-      ...(payload.websiteUrl !== undefined && { website: payload.websiteUrl }),
-      ...(payload.facebookUrl !== undefined && { facebook: payload.facebookUrl }),
-      ...(payload.instagramUrl !== undefined && { instagram: payload.instagramUrl }),
-      ...(payload.linkedinUrl !== undefined && { linkedin: payload.linkedinUrl }),
-      ...(payload.tiktokUrl !== undefined && { tiktok: payload.tiktokUrl }),
-      
-      // Map other fields - ONLY if they exist in payload
-      ...(payload.businessOwnershipType !== undefined && { ownershipType: payload.businessOwnershipType }),
-      ...(payload.numberOfEmployees !== undefined && { employeesCount: payload.numberOfEmployees }),
-      ...(payload.businessEmail !== undefined && { secondaryBusinessEmail: payload.businessEmail }),
-      ...(payload.hasThirdPartyBooking !== undefined && { usesThirdPartyBooking: payload.hasThirdPartyBooking }),
-      
-      // Remove frontend-only fields
-      websiteUrl: undefined,
-      facebookUrl: undefined,
-      instagramUrl: undefined,
-      linkedinUrl: undefined,
-      tiktokUrl: undefined,
-      businessOwnershipType: undefined,
-      numberOfEmployees: undefined,
-      businessEmail: undefined,
-      hasThirdPartyBooking: undefined,
-      contactEmail: undefined,
-      contactPhone: undefined
-    };
+    // 5️⃣ Map frontend fields to schema fields
+    if (payload.businessOwnershipType !== undefined) {
+      payload.ownershipType = payload.businessOwnershipType;
+      delete payload.businessOwnershipType;
+    }
+    if (payload.numberOfEmployees !== undefined) {
+      payload.employeesCount = payload.numberOfEmployees;
+      delete payload.numberOfEmployees;
+    }
+    if (payload.contactPhone !== undefined) {
+      payload.primaryContactPhone = payload.contactPhone; // primary contact
+      payload.primaryPhone = payload.contactPhone;        // also general primaryPhone
+      delete payload.contactPhone;
+    }
+    if (payload.contactEmail !== undefined) {
+      payload.secondaryBusinessEmail = payload.contactEmail; // secondary email
+      delete payload.contactEmail;
+    }
 
-    // 6️⃣ Apply ONLY the mapped fields that exist in payload
-    // This ensures we don't overwrite existing data with undefined
-    Object.keys(mappedPayload).forEach(key => {
-      if (mappedPayload[key] !== undefined) {
-        onboarding[key] = mappedPayload[key];
+    // Map social URLs
+    const urlFields = ["websiteUrl", "facebookUrl", "instagramUrl", "linkedinUrl", "tiktokUrl"];
+    urlFields.forEach((field) => {
+      if (payload[field] !== undefined) {
+        const key = field.replace("Url", ""); // websiteUrl -> website
+        payload[key] = payload[field];
+        delete payload[field];
       }
     });
 
-    onboarding.status = "draft"; 
+    // 6️⃣ Apply sanitized payload to onboarding
+    Object.keys(payload).forEach((key) => {
+      if (payload[key] !== undefined) {
+        onboarding[key] = payload[key];
+      }
+    });
 
-    // 7️⃣ Save document
+    // 7️⃣ Apply defaults only for missing/null fields
+    const defaultFields = {
+      firstName: "",
+      lastName: "",
+      businessName: "",
+      primaryEmail: "",
+      primaryPhone: "",
+      primaryContactPhone: "",
+      language: "",
+      licenseNumber: "",
+      businessBio: "",
+      characterLimit: 0,
+      businessProfileImage: { url: "", verified: false },
+      businessEmail: "",
+      businessPhone: "",
+      alternatePhone: "",
+      twitter: "",
+      refundPolicyDocument: { url: "", verified: false },
+      termsDocument: { url: "", verified: false },
+      googleReviewLink: "",
+      communityServiceLink: "",
+      website: "",
+      facebook: "",
+      instagram: "",
+      linkedin: "",
+      tiktok: "",
+      ownershipType: null,
+      employeesCount: null,
+      usesThirdPartyBooking: false,
+    };
+
+    Object.keys(defaultFields).forEach((key) => {
+      if (onboarding[key] === undefined || onboarding[key] === null) {
+        onboarding[key] = defaultFields[key];
+      }
+    });
+
+    // 8️⃣ Ensure status is always draft
+    onboarding.status = "draft";
+
+    // 9️⃣ Save document
     await onboarding.save();
 
     return res.status(200).json({
@@ -212,9 +223,122 @@ const validateStage1Payload = (body) => {
     return res.status(500).json({
       success: false,
       message: "Failed to save onboarding draft",
+      error: error.message,
     });
   }
 };
+
+//    exports.saveDraft = async (req, res) => {
+//   try {
+//     const userId = req.user._id;
+//     const payload = req.body;
+
+//     // 1️⃣ Check existing onboarding
+//     let onboarding = await VendorOnboarding.findOne({ userId });
+
+//     // 2️⃣ Lock if already submitted
+//     if (onboarding && onboarding.status === "submitted") {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Onboarding already submitted and cannot be edited",
+//       });
+//     }
+
+//     // 3️⃣ Generate applicationId ONLY once
+//     if (!onboarding) {
+//       onboarding = new VendorOnboarding({
+//         userId,
+//         applicationId: `MBH-APP-${Date.now()}-${Math.random()
+//           .toString(36)
+//           .substring(2, 8)
+//           .toUpperCase()}`,
+//         status: "draft",
+//       });
+//     }
+
+//     // 4️⃣ Set DEFAULT EMPTY VALUES for NEW fields ONLY if they don't exist
+//     // This ensures existing data is preserved and frontend doesn't need changes
+//     if (!onboarding.firstName) onboarding.firstName = "";
+//     if (!onboarding.lastName) onboarding.lastName = "";
+//     if (!onboarding.primaryEmail) onboarding.primaryEmail = "";
+//     if (!onboarding.primaryPhone) onboarding.primaryPhone = "";
+//     if (!onboarding.language) onboarding.language = "";
+//     if (!onboarding.licenseNumber) onboarding.licenseNumber = "";
+//     if (!onboarding.businessBio) onboarding.businessBio = "";
+//     if (!onboarding.characterLimit) onboarding.characterLimit = 0;
+//     if (!onboarding.businessProfileImage) {
+//       onboarding.businessProfileImage = { url: "", verified: false };
+//     }
+//     if (!onboarding.businessEmail) onboarding.businessEmail = "";
+//     if (!onboarding.businessPhone) onboarding.businessPhone = "";
+//     if (!onboarding.alternatePhone) onboarding.alternatePhone = "";
+//     if (!onboarding.twitter) onboarding.twitter = "";
+//     if (!onboarding.refundPolicyDocument) {
+//       onboarding.refundPolicyDocument = { url: "", verified: false };
+//     }
+//     if (!onboarding.termsDocument) {
+//       onboarding.termsDocument = { url: "", verified: false };
+//     }
+//     if (!onboarding.googleReviewLink) onboarding.googleReviewLink = "";
+//     if (!onboarding.communityServiceLink) onboarding.communityServiceLink = "";
+
+//     // 5️⃣ Map EXISTING frontend fields to database fields (NO CHANGES HERE)
+//     const mappedPayload = {
+//       ...payload,
+      
+//       // Map URL fields - ONLY if they exist in payload
+//       ...(payload.websiteUrl !== undefined && { website: payload.websiteUrl }),
+//       ...(payload.facebookUrl !== undefined && { facebook: payload.facebookUrl }),
+//       ...(payload.instagramUrl !== undefined && { instagram: payload.instagramUrl }),
+//       ...(payload.linkedinUrl !== undefined && { linkedin: payload.linkedinUrl }),
+//       ...(payload.tiktokUrl !== undefined && { tiktok: payload.tiktokUrl }),
+      
+//       // Map other fields - ONLY if they exist in payload
+//       ...(payload.businessOwnershipType !== undefined && { ownershipType: payload.businessOwnershipType }),
+//       ...(payload.numberOfEmployees !== undefined && { employeesCount: payload.numberOfEmployees }),
+//       ...(payload.businessEmail !== undefined && { secondaryBusinessEmail: payload.businessEmail }),
+//       ...(payload.hasThirdPartyBooking !== undefined && { usesThirdPartyBooking: payload.hasThirdPartyBooking }),
+      
+//       // Remove frontend-only fields
+//       websiteUrl: undefined,
+//       facebookUrl: undefined,
+//       instagramUrl: undefined,
+//       linkedinUrl: undefined,
+//       tiktokUrl: undefined,
+//       businessOwnershipType: undefined,
+//       numberOfEmployees: undefined,
+//       businessEmail: undefined,
+//       hasThirdPartyBooking: undefined,
+//       contactEmail: undefined,
+//       contactPhone: undefined
+//     };
+
+//     // 6️⃣ Apply ONLY the mapped fields that exist in payload
+//     // This ensures we don't overwrite existing data with undefined
+//     Object.keys(mappedPayload).forEach(key => {
+//       if (mappedPayload[key] !== undefined) {
+//         onboarding[key] = mappedPayload[key];
+//       }
+//     });
+
+//     onboarding.status = "draft"; 
+
+//     // 7️⃣ Save document
+//     await onboarding.save();
+
+//     return res.status(200).json({
+//       success: true,
+//       message: "Stage-1 draft saved successfully",
+//       data: onboarding,
+//     });
+//   } catch (error) {
+//     console.error("Save draft error:", error);
+//     return res.status(500).json({
+//       success: false,
+//       message: "Failed to save onboarding draft",
+//     });
+//   }
+// };
 
 //  exports.saveDraft = async (req, res) => {
 //   try {
@@ -319,8 +443,7 @@ exports.getDraft = async (req, res) => {
   }
 };
 
-//get onbaording data for the buisness completetion setup 
-
+//get onbaording data for the buisness completetion setup page
 exports.getOnboardingData = async (req, res) => {
   try {
     const onboarding = await VendorOnboarding.findOne({
@@ -334,9 +457,32 @@ exports.getOnboardingData = async (req, res) => {
       });
     }
 
+    // Fetch user basic details
+    const user = await User.findById(req.user._id).select(
+      "name email mobile"
+    );
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Split name into first & last
+    const nameParts = user.name.split(" ");
+    const firstName = nameParts[0] || "";
+    const lastName = nameParts.slice(1).join(" ") || "";
+
     return res.status(200).json({
       success: true,
-      data: onboarding, // Returns complete onboarding document
+      data: {
+        ...onboarding.toObject(),
+        firstName,
+        lastName,
+        primaryEmail: user.email,
+        primaryPhone: user.mobile,
+      },
     });
   } catch (error) {
     console.error("Error fetching onboarding data:", error);
@@ -397,9 +543,12 @@ exports.updateBusinessProfile = async (req, res) => {
         businessName: onboarding.businessName,
         description: onboarding.businessBio,
         logo: onboarding.businessProfileImage?.url,
+        coverImage: onboarding.featureBanner?.url,
         email: onboarding.businessEmail || onboarding.secondaryBusinessEmail,
         phone: onboarding.businessPhone || onboarding.primaryPhone,
         listingType: onboarding.businessType || 'product',
+        points: onboarding.totalVerificationPoints || 0,
+        badge: onboarding.badge || null,
         
         // Subscription reference (important for limits)
         subscriptionId: subscription?._id || null,
@@ -429,9 +578,12 @@ exports.updateBusinessProfile = async (req, res) => {
         business.businessName = businessData.businessName;
         business.description = businessData.description;
         business.logo = businessData.logo;
+        business.coverImage = businessData.coverImage;
         business.email = businessData.email;
         business.phone = businessData.phone;
         business.listingType = businessData.listingType;
+        business.points = businessData.points;
+        business.badge = businessData.badge;
         business.subscriptionId = businessData.subscriptionId;
         business.subscriptionPlanId = businessData.subscriptionPlanId;
         business.subscriptionStatus = businessData.subscriptionStatus;
@@ -443,6 +595,13 @@ exports.updateBusinessProfile = async (req, res) => {
       }
 
       await business.save();
+
+      // Link onboarding <-> business for direct lookups in admin flows
+      if (!onboarding.businessId || onboarding.businessId.toString() !== business._id.toString()) {
+        onboarding.businessId = business._id;
+        await onboarding.save();
+      }
+
       console.log(`✅ Business data saved for user ${userId}`);
 
     } catch (businessError) {
@@ -899,7 +1058,7 @@ exports.submitForReview = async (req, res) => {
     if (!onboarding) {
       return res.status(404).json({
         success: false,
-        message: "Onboarding record not found",
+        message: "save Draft before submitting for review",
       });
     }
 

@@ -4,7 +4,8 @@ const ServiceCategory = require('../models/ServiceCategory');
 const ProductSubcategory = require('../models/ProductSubcategory');
 const ServiceSubcategory = require('../models/ServiceSubcategory');
 const FoodSubcategory = require('../models/FoodSubcategory');
-
+const Product = require('../models/Product');
+const Service = require('../models/Service');
 
 
 const getAllCategoriesAdmin = async (req, res) => {
@@ -112,15 +113,43 @@ const getAllCategories = async (req, res) => {
     });
   }
 };
+
 const getProductCategories = async (req, res) => {
   try {
-    const productCategories = await ProductCategory.find();
+    const productCategories = await ProductCategory.find().lean();
+
+    // Aggregate product counts
+    const counts = await Product.aggregate([
+      {
+        $match: { isDeleted: false, isPublished: true }
+      },
+      {
+        $group: {
+          _id: "$categoryId",
+          totalProducts: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Convert to map for quick lookup
+    const countMap = {};
+    counts.forEach(item => {
+      countMap[item._id.toString()] = item.totalProducts;
+    });
+
+    // Add totalProducts field to each category
+    const updatedCategories = productCategories.map(cat => ({
+      ...cat,
+      totalProducts: countMap[cat._id.toString()] || 0
+    }));
+
     return res.status(200).json({
       success: true,
       data: {
-        productCategories,
+        productCategories: updatedCategories, // 👈 SAME structure as before
       },
     });
+
   } catch (error) {
     console.error('Error fetching categories:', error);
     return res.status(500).json({
@@ -131,15 +160,64 @@ const getProductCategories = async (req, res) => {
   }
 };
 
+
+
+// const getProductCategories = async (req, res) => {
+//   try {
+//     const productCategories = await ProductCategory.find();
+//     return res.status(200).json({
+//       success: true,
+//       data: {
+//         productCategories,
+//       },
+//     });
+//   } catch (error) {
+//     console.error('Error fetching categories:', error);
+//     return res.status(500).json({
+//       success: false,
+//       message: 'Error fetching product categories',
+//       error: error.message,
+//     });
+//   }
+// };
+
+
 const getServiceCategories = async (req, res) => {
   try {
-    const serviceCategories = await ServiceCategory.find();
+    const serviceCategories = await ServiceCategory.find().lean();
+
+    // Aggregate service counts
+    const counts = await Service.aggregate([
+      {
+        $match: { isPublished: true }
+      },
+      {
+        $group: {
+          _id: "$categoryId",
+          totalServices: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Convert to map
+    const countMap = {};
+    counts.forEach(item => {
+      countMap[item._id.toString()] = item.totalServices;
+    });
+
+    // Attach totalServices field
+    const updatedCategories = serviceCategories.map(cat => ({
+      ...cat,
+      totalServices: countMap[cat._id.toString()] || 0
+    }));
+
     return res.status(200).json({
       success: true,
       data: {
-        serviceCategories,
+        serviceCategories: updatedCategories, // 👈 SAME structure
       },
     });
+
   } catch (error) {
     console.error('Error fetching service categories:', error);
     return res.status(500).json({
@@ -149,6 +227,26 @@ const getServiceCategories = async (req, res) => {
     });
   }
 };
+
+
+// const getServiceCategories = async (req, res) => {
+//   try {
+//     const serviceCategories = await ServiceCategory.find();
+//     return res.status(200).json({
+//       success: true,
+//       data: {
+//         serviceCategories,
+//       },
+//     });
+//   } catch (error) {
+//     console.error('Error fetching service categories:', error);
+//     return res.status(500).json({
+//       success: false,
+//       message: 'Error fetching service categories',
+//       error: error.message,
+//     });
+//   }
+// };
 
 const getFoodCategories = async (req, res) => {
   try {

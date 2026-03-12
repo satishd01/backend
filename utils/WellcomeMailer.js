@@ -148,10 +148,10 @@ exports.sendVendorApprovedEmail = async ({
 
         <p><strong>Application ID:</strong> ${applicationId}</p>
 
-        <a href="https://app.mosaicbizhub.com/partner/onboarding/tier"
+        <a href="https://app.mosaicbizhub.com/login?type=vendor"
            style="display:inline-block;margin-top:16px;padding:12px 20px;
            background:#28a745;color:#fff;text-decoration:none;border-radius:4px;">
-           Continue Onboarding
+            Continue Onboarding
         </a>
 
         <p style="margin-top:30px;font-size:12px;color:#777;">

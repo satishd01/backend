@@ -1,5 +1,6 @@
 const VendorOnboarding = require('../../models/VendorOnboardingStage1');
 const User = require('../../models/User');
+const Business = require('../../models/Business');
 const { 
   sendVendorApprovedEmail,
   sendVendorRejectionEmail
@@ -89,6 +90,29 @@ exports.verifyAndAllocatePoints = async (req, res) => {
   try {
     const { applicationId } = req.params;
     const { verificationType, documentIndex, isVerified } = req.body;
+    const validVerificationTypes = [
+      'minority-proof',
+      'tax-doc',
+      'business-license',
+      'website',
+      'facebook',
+      'instagram',
+      'linkedin',
+      'tiktok',
+      'business-profile-image',
+      'business-bio',
+      'refund-policy-document',
+      'terms-document',
+      'google-review-link',
+      'community-service-link'
+    ];
+
+    if (!validVerificationTypes.includes(verificationType)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid verificationType'
+      });
+    }
 
     const application = await VendorOnboarding.findOne({ applicationId });
     
@@ -101,6 +125,7 @@ exports.verifyAndAllocatePoints = async (req, res) => {
 
     let pointsToAdd = 0;
     let alreadyVerified = false;
+    let missingField = null;
 
     // ✅ Use existing verificationChecklist
     if (verificationType === 'minority-proof' && isVerified) {
@@ -168,21 +193,121 @@ exports.verifyAndAllocatePoints = async (req, res) => {
         application.verificationChecklist.tiktok = true;
         pointsToAdd = 5;
       }
+    } else if (verificationType === 'business-profile-image' && isVerified) {
+      if (!application.businessProfileImage?.url) {
+        missingField = 'businessProfileImage';
+      } else if (application.verificationChecklist.businessProfileImage) {
+        alreadyVerified = true;
+      } else {
+        application.businessProfileImage.verified = true;
+        application.verificationChecklist.businessProfileImage = true;
+        pointsToAdd = 5;
+      }
+    } else if (verificationType === 'business-bio' && isVerified) {
+      if (!application.businessBio) {
+        missingField = 'businessBio';
+      } else if (application.verificationChecklist.businessBio) {
+        alreadyVerified = true;
+      } else {
+        application.verificationChecklist.businessBio = true;
+        pointsToAdd = 5;
+      }
+    } else if (verificationType === 'refund-policy-document' && isVerified) {
+      if (!application.refundPolicyDocument?.url) {
+        missingField = 'refundPolicyDocument';
+      } else if (application.verificationChecklist.refundPolicyDocument) {
+        alreadyVerified = true;
+      } else {
+        application.refundPolicyDocument.verified = true;
+        application.verificationChecklist.refundPolicyDocument = true;
+        pointsToAdd = 5;
+      }
+    } else if (verificationType === 'terms-document' && isVerified) {
+      if (!application.termsDocument?.url) {
+        missingField = 'termsDocument';
+      } else if (application.verificationChecklist.termsDocument) {
+        alreadyVerified = true;
+      } else {
+        application.termsDocument.verified = true;
+        application.verificationChecklist.termsDocument = true;
+        pointsToAdd = 5;
+      }
+    } else if (verificationType === 'google-review-link' && isVerified) {
+      if (!application.googleReviewLink) {
+        missingField = 'googleReviewLink';
+      } else if (application.verificationChecklist.googleReviewLink) {
+        alreadyVerified = true;
+      } else {
+        application.verificationChecklist.googleReviewLink = true;
+        pointsToAdd = 5;
+      }
+    } else if (verificationType === 'community-service-link' && isVerified) {
+      if (!application.communityServiceLink) {
+        missingField = 'communityServiceLink';
+      } else if (application.verificationChecklist.communityServiceLink) {
+        alreadyVerified = true;
+      } else {
+        application.verificationChecklist.communityServiceLink = true;
+        pointsToAdd = 5;
+      }
+    }
+
+    if (missingField) {
+      return res.status(400).json({
+        success: false,
+        message: `${missingField} is missing and cannot be verified`
+      });
     }
 
     // Handle unverification (isVerified = false)
     if (!isVerified) {
       if (verificationType === 'minority-proof') {
         application.verificationChecklist.minorityDocs = false;
+        if (documentIndex !== undefined && application.minorityProofDocuments[documentIndex]) {
+          application.minorityProofDocuments[documentIndex].verified = false;
+        }
         pointsToAdd = -10;
       } else if (verificationType === 'tax-doc') {
         application.verificationChecklist.taxDocs = false;
+        if (documentIndex !== undefined && application.taxDocuments[documentIndex]) {
+          application.taxDocuments[documentIndex].verified = false;
+        }
         pointsToAdd = -10;
       } else if (verificationType === 'business-license') {
         application.verificationChecklist.businessLicense = false;
+        if (documentIndex !== undefined && application.businessLicenseDocuments[documentIndex]) {
+          application.businessLicenseDocuments[documentIndex].verified = false;
+        }
         pointsToAdd = -10;
       } else if (['website', 'facebook', 'instagram', 'linkedin', 'tiktok'].includes(verificationType)) {
         application.verificationChecklist[verificationType] = false;
+        pointsToAdd = -5;
+      } else if (verificationType === 'business-profile-image') {
+        application.verificationChecklist.businessProfileImage = false;
+        if (application.businessProfileImage) {
+          application.businessProfileImage.verified = false;
+        }
+        pointsToAdd = -5;
+      } else if (verificationType === 'business-bio') {
+        application.verificationChecklist.businessBio = false;
+        pointsToAdd = -5;
+      } else if (verificationType === 'refund-policy-document') {
+        application.verificationChecklist.refundPolicyDocument = false;
+        if (application.refundPolicyDocument) {
+          application.refundPolicyDocument.verified = false;
+        }
+        pointsToAdd = -5;
+      } else if (verificationType === 'terms-document') {
+        application.verificationChecklist.termsDocument = false;
+        if (application.termsDocument) {
+          application.termsDocument.verified = false;
+        }
+        pointsToAdd = -5;
+      } else if (verificationType === 'google-review-link') {
+        application.verificationChecklist.googleReviewLink = false;
+        pointsToAdd = -5;
+      } else if (verificationType === 'community-service-link') {
+        application.verificationChecklist.communityServiceLink = false;
         pointsToAdd = -5;
       }
     }
@@ -204,6 +329,12 @@ exports.verifyAndAllocatePoints = async (req, res) => {
     application.totalVerificationPoints += pointsToAdd;
 
     await application.save();
+
+    // Keep Business points in sync with stage-1 onboarding points
+    await Business.findOneAndUpdate(
+      { owner: application.userId },
+      { $set: { points: application.totalVerificationPoints } }
+    );
 
     return res.status(200).json({
       success: true,
@@ -245,42 +376,73 @@ exports.finalizeVerification = async (req, res) => {
     }
 
     const totalPoints = application.totalVerificationPoints;
+    const previousStatus = application.status;
+    let badge = null;
+
+    if (totalPoints >= 80) badge = 'Diamond';
+    else if (totalPoints >= 50) badge = 'Platinum';
+    else if (totalPoints >= 40) badge = 'Gold';
+    else if (totalPoints >= 30) badge = 'Silver';
     
     if (totalPoints >= 30) {
       // SCENARIO 1: Approved (30+ points)
       application.status = 'verified';
+      application.badge = badge;
+      application.totalVerificationPoints = totalPoints;
       await application.save();
+
+      // Keep Business points/badge in sync on finalize
+      await Business.findOneAndUpdate(
+        { owner: application.userId._id },
+        { $set: { points: totalPoints, badge } }
+      );
       
-      // Send approval email
-      await sendVendorApprovedEmail({
-        to: application.userId.email,
-        vendorName: application.userId.name,
-        applicationId: application.applicationId
-      });
+      // Send approval email only on status transition
+      let emailSent = false;
+      if (previousStatus !== 'verified') {
+        await sendVendorApprovedEmail({
+          to: application.userId.email,
+          vendorName: application.userId.name,
+          applicationId: application.applicationId
+        });
+        emailSent = true;
+      }
       
       return res.status(200).json({
         success: true,
         message: 'Application approved successfully',
-        data: { status: 'approved', points: totalPoints }
+        data: { status: 'approved', points: totalPoints, badge, emailSent }
       });
       
     } else {
       // SCENARIO 2: Rejected (<30 points)
       application.status = 'rejected';
+      application.badge = badge;
+      application.totalVerificationPoints = totalPoints;
       await application.save();
+
+      // Keep Business points/badge in sync on finalize
+      await Business.findOneAndUpdate(
+        { owner: application.userId._id },
+        { $set: { points: totalPoints, badge } }
+      );
       
-      // Send rejection email
-      await sendVendorRejectionEmail({
-        to: application.userId.email,
-        vendorName: application.userId.name,
-        applicationId: application.applicationId,
-        points: totalPoints
-      });
+      // Send rejection email only on status transition
+      let emailSent = false;
+      if (previousStatus !== 'rejected') {
+        await sendVendorRejectionEmail({
+          to: application.userId.email,
+          vendorName: application.userId.name,
+          applicationId: application.applicationId,
+          points: totalPoints
+        });
+        emailSent = true;
+      }
       
       return res.status(200).json({
         success: true,
         message: 'Application rejected due to insufficient points',
-        data: { status: 'rejected', points: totalPoints }
+        data: { status: 'rejected', points: totalPoints, badge, emailSent }
       });
     }
 

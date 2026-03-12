@@ -8,6 +8,7 @@ const vendorOnboardRoutes = require('./routes/vendorOnboarding.routes');
 const subscriptionPlanRoutes = require('./routes/subscriptionPlanRoutes')
 const productRoutes = require('./routes/productRoutes');
 const serviceRoutes = require('./routes/serviceRoutes');
+const foodRoutes = require('./routes/foodRoutes');
 const minorityTypeRoutes = require('./routes/minorityTypeRoutes');
 const uploadImageRoute = require('./routes/uploadImage')
 const subscriptionRoutes = require('./routes/subscriptionRoutes');
@@ -137,6 +138,7 @@ app.use('/api/vendor-onboarding', vendorOnboardRoutes);
 app.use('/admin/vendor-onboard-verify-stage1', vendorOnboardVerifyStage1Routes);
 app.use('/api/subscription-plans', subscriptionPlanRoutes);
 app.use('/api/service', serviceRoutes);
+app.use('/api/food', foodRoutes);
 app.use('/api/minority-types', minorityTypeRoutes);
 app.use('/api', uploadImageRoute);
 app.use('/api/subscriptions', subscriptionRoutes);

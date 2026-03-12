@@ -32,6 +32,7 @@ exports.getStage1UploadUrl = async (req, res) => {
       
       // Business Profile Documents
       "business-profile",  // For logo/business profile image
+      "feature-banner",    // For business profile feature banner image
       "refund-policy",     // For refund & return policy
       "terms-service"      // For terms & conditions / service agreement
     ];
@@ -61,6 +62,9 @@ exports.getStage1UploadUrl = async (req, res) => {
       // Business Profile Documents  
       case "business-profile":
         folderPath = `vendor-onboarding/business-profile/${userId}/logo`;
+        break;
+      case "feature-banner":
+        folderPath = `vendor-onboarding/business-profile/${userId}/feature-banner`;
         break;
       case "refund-policy":
         folderPath = `vendor-onboarding/business-profile/${userId}/refund-policy`;

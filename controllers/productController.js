@@ -7,6 +7,9 @@ const { validationResult } = require('express-validator');
 const deleteCloudinaryFile = require('../utils/deleteCloudinaryFile');
 const { PutObjectCommand, S3Client } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
+const mongoose = require('mongoose');
+const VendorOnboardingStage1 = require('../models/VendorOnboardingStage1');
+const { Decimal128 } = mongoose.Types;
 const s3Client = new S3Client({
   region: process.env.AWS_REGION,
   credentials: {
@@ -19,7 +22,7 @@ const s3Client = new S3Client({
 /**
  * Generate SKU for variant
  */
-const generateSKU = (businessId, productId, attributes) => {
+const baseGenerateSKU = (businessId, productId, attributes) => {
   const prefix = 'PRD';
   const businessCode = businessId.toString().slice(-4);
   const productCode = productId.toString().slice(-4);
@@ -28,12 +31,23 @@ const generateSKU = (businessId, productId, attributes) => {
   return `${prefix}-${businessCode}-${productCode}-${attrString}-${random}`.toUpperCase();
 };
 
+const generateUniqueSKU = async (businessId, productId, attributes) => {
+  let sku;
+  let exists = true;
+
+  while (exists) {
+    sku = baseGenerateSKU(businessId, productId, attributes); // ✅ call base, NOT itself
+    exists = await ProductVariant.findOne({ sku });
+  }
+
+  return sku;
+};
+
 /**
  * CREATE PRODUCT WITH VARIANTS
  */
-/**
- * CREATE PRODUCT WITH VARIANTS
- */
+
+
 exports.createProductWithVariants = async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -43,6 +57,7 @@ exports.createProductWithVariants = async (req, res) => {
 
     const userId = req.user._id;
     console.log('Creating product for user:', userId);
+
     const {
       title,
       description,
@@ -64,28 +79,24 @@ exports.createProductWithVariants = async (req, res) => {
       return res.status(400).json({ error: 'At least one product variant is required.' });
     }
 
-    // ✅ Check business ownership ONLY - REMOVED isApproved check
+    // Check business ownership
     const business = await Business.findOne({ _id: businessId, owner: userId });
     if (!business) {
       return res.status(403).json({ error: 'You do not own this business.' });
     }
 
     // Check subscription
-const subscription = await Subscription.findOne({
-  userId: userId,  // ✅ Find by user ID
-  status: 'active',
-  endDate: { $gte: new Date() },
-}).sort({ createdAt: -1 }); // Get the most recent one
-
-if (!subscription) {
-  return res.status(403).json({ 
-    error: 'Valid subscription not found.',
-    details: 'Please ensure you have an active subscription with completed payment.'
-  });
-}
+    const subscription = await Subscription.findOne({
+      userId,
+      status: 'active',
+      endDate: { $gte: new Date() },
+    }).sort({ createdAt: -1 });
 
     if (!subscription) {
-      return res.status(403).json({ error: 'Valid subscription not found.' });
+      return res.status(403).json({ 
+        error: 'Valid subscription not found.',
+        details: 'Please ensure you have an active subscription with completed payment.'
+      });
     }
 
     const subscriptionPlan = await SubscriptionPlan.findById(subscription.subscriptionPlanId);
@@ -93,13 +104,6 @@ if (!subscription) {
 
     // Count existing variants for the business
     const variantCount = await ProductVariant.countDocuments({ businessId, isDeleted: false });
-
-    // Check if adding variants would exceed limit
-    if (variantCount + variants.length > productLimit) {
-      return res.status(403).json({
-        error: `Product variant limit reached. You can add ${productLimit - variantCount} more variants.`,
-      });
-    }
 
     // Create Product
     const product = new Product({
@@ -120,48 +124,159 @@ if (!subscription) {
 
     await product.save();
 
-    // Create Variants
-    const variantDocs = variants.map((variant) => ({
-      productId: product._id,
-      businessId,
-      ownerId: userId,
-      attributes: new Map(Object.entries(variant.attributes || {})),
-      sku: variant.sku || generateSKU(businessId, product._id, new Map(Object.entries(variant.attributes || {}))),
-      price: variant.price,
-      salePrice: variant.salePrice,
-      stock: variant.stock || 0,
-      shipping: variant.shipping || null,
-      images: variant.images || [],
-      isPublished: isPublished || false,
-    }));
+  // Create Variants updated section to handle varient skus rolback and ensure uniqueness
+
+
+  const variantDocs = [];
+
+for (const variant of variants) {
+  const attrMap = new Map(Object.entries(variant.attributes || {}));
+
+  let sku = variant.sku;
+
+  // If frontend didn't send SKU
+  if (!sku) {
+    sku = await generateUniqueSKU(businessId, product._id, attrMap);
+  }
+
+  // Attach applicationId prefix
+  const onboarding = await VendorOnboardingStage1.findOne({ userId });
+
+  if (onboarding?.applicationId) {
+    sku = `${onboarding.applicationId}-${sku}`;
+  }
+
+  // Check duplicate in DB
+  const existingSku = await ProductVariant.findOne({
+    sku,
+    isDeleted: false,
+  });
+
+  if (existingSku) {
+    const newSku = await generateUniqueSKU(businessId, product._id, attrMap);
+    sku = `${onboarding.applicationId}-${newSku}`;
+  }
+
+  variantDocs.push({
+    productId: product._id,
+    businessId,
+    ownerId: userId,
+    attributes: attrMap,
+    sku,
+    price: Decimal128.fromString(variant.price.toString()),
+    salePrice: variant.salePrice
+      ? Decimal128.fromString(variant.salePrice.toString())
+      : null,
+    stock: variant.stock || 0,
+    shipping: variant.shipping || { standard: 0, overnight: 0, local: 0 },
+    images: variant.images || [],
+    isPublished: isPublished || false,
+  });
+}
+
+// const variantDocs = [];
+// const usedSkus = new Set();
+
+// for (const variant of variants) {
+//   const attrMap = new Map(Object.entries(variant.attributes || {}));
+//   let sku = variant.sku;
+
+//   // If no SKU from frontend → generate
+//   if (!sku) {
+//     sku = await generateUniqueSKU(businessId, product._id, attrMap);
+//   }
+
+//   // If SKU already used in this request → generate new
+//   if (usedSkus.has(sku)) {
+//     sku = await generateUniqueSKU(businessId, product._id, attrMap);
+//   }
+
+//   // Check database duplicate
+//   const existingSku = await ProductVariant.findOne({
+//     sku,
+//     businessId,
+//     isDeleted: false,
+//   });
+
+//   if (existingSku) {
+//     sku = await generateUniqueSKU(businessId, product._id, attrMap);
+//   }
+
+//   usedSkus.add(sku);
+
+//   variantDocs.push({
+//     productId: product._id,
+//     businessId,
+//     ownerId: userId,
+//     attributes: attrMap,
+//     sku,
+//     price: Decimal128.fromString(variant.price.toString()),
+//     salePrice: variant.salePrice
+//       ? Decimal128.fromString(variant.salePrice.toString())
+//       : null,
+//     stock: variant.stock || 0,
+//     shipping: variant.shipping || { standard: 0, overnight: 0, local: 0 },
+//     images: variant.images || [],
+//     isPublished: isPublished || false,
+//   });
+// }
 
     let savedVariants;
     try {
       savedVariants = await ProductVariant.insertMany(variantDocs);
-      const variantIds = savedVariants.map((v) => v._id);
+      const variantIds = savedVariants.map(v => v._id);
       await Product.findByIdAndUpdate(product._id, { $push: { variants: { $each: variantIds } } });
-    } catch (variantErr) {
-      // Rollback product creation
-      await Product.findByIdAndDelete(product._id);
-      if (coverImage) await deleteCloudinaryFile(coverImage);
-      
-      for (const variant of variants) {
-        if (variant.images) {
-          for (const image of variant.images) {
-            await deleteCloudinaryFile(image);
-          }
-        }
-      }
-      
-      return res.status(400).json({ 
-        error: 'Error creating variants', 
-        details: variantErr.message 
-      });
-    }
 
+      // -----------------------------
+      // Update product price as minimum variant price
+      // -----------------------------
+const prices = savedVariants.map(v => {
+  const sale = v.salePrice ? parseFloat(v.salePrice.toString()) : null;
+  const price = parseFloat(v.price.toString());
+
+  return sale !== null ? sale : price;
+});
+
+const minPrice = Math.min(...prices);
+const maxPrice = Math.max(...prices);
+
+      await Product.findByIdAndUpdate(product._id, {
+        price: Decimal128.fromString(minPrice.toString()),
+        maxPrice: Decimal128.fromString(maxPrice.toString()),
+      });
+
+    } catch (variantErr) {
+
+  if (variantErr.code === 11000) {
+
+    // Extract field & value from error message
+    const regex = /dup key:\s*{\s*(\w+):\s*"?(.*?)"?\s*}/;
+    const match = variantErr.message.match(regex);
+
+    const field = match ? match[1] : "field";
+    const value = match ? match[2] : "";
+
+    return res.status(400).json({
+      success: false,
+      error: {
+        type: "DUPLICATE_FIELD",
+        field,
+        message: `${field} '${value}' already exists. Please use a unique value.`
+      }
+    });
+  }
+
+  return res.status(400).json({
+    success: false,
+    error: {
+      type: "VARIANT_CREATION_FAILED",
+      message: "Something went wrong while creating product variants."
+    }
+  });
+} 
     return res.status(201).json({
       message: 'Product and variants created successfully.',
-      product,
+      product: await Product.findById(product._id), // returns product with price
       variants: savedVariants,
     });
 
@@ -170,6 +285,175 @@ if (!subscription) {
     return res.status(500).json({ error: 'Server error while creating product.' });
   }
 };
+
+// exports.createProductWithVariants = async (req, res) => {
+//   try {
+//     const errors = validationResult(req);
+//     if (!errors.isEmpty()) {
+//       return res.status(400).json({ errors: errors.array() });
+//     }
+
+//     const userId = req.user._id;
+//     console.log('Creating product for user:', userId);
+
+//     const {
+//       title,
+//       description,
+//       categoryId,
+//       subcategoryId,
+//       businessId,
+//       attributes,
+//       shipping,
+//       coverImage,
+//       galleryImages,
+//       metaFields,
+//       discount,
+//       variants,
+//       isPublished,
+//     } = req.body;
+
+//     // Validate variants
+//     if (!Array.isArray(variants) || variants.length === 0) {
+//       return res.status(400).json({ error: 'At least one product variant is required.' });
+//     }
+
+//     // Check business ownership
+//     const business = await Business.findOne({ _id: businessId, owner: userId });
+//     if (!business) {
+//       return res.status(403).json({ error: 'You do not own this business.' });
+//     }
+
+//     // Check subscription
+//     const subscription = await Subscription.findOne({
+//       userId,
+//       status: 'active',
+//       endDate: { $gte: new Date() },
+//     }).sort({ createdAt: -1 });
+
+//     if (!subscription) {
+//       return res.status(403).json({ 
+//         error: 'Valid subscription not found.',
+//         details: 'Please ensure you have an active subscription with completed payment.'
+//       });
+//     }
+
+//     const subscriptionPlan = await SubscriptionPlan.findById(subscription.subscriptionPlanId);
+//     const productLimit = subscriptionPlan?.limits?.productListings || 0;
+
+//     // Count existing variants for the business
+//     const variantCount = await ProductVariant.countDocuments({ businessId, isDeleted: false });
+
+//     // Create Product
+//     const product = new Product({
+//       title,
+//       description,
+//       categoryId,
+//       subcategoryId,
+//       ownerId: userId,
+//       businessId,
+//       attributes: attributes || [],
+//       shipping: shipping || { standard: 0, overnight: 0, local: 0 },
+//       coverImage,
+//       galleryImages: galleryImages || [],
+//       metaFields: metaFields || [],
+//       discount: discount || null,
+//       isPublished: isPublished || false,
+//     });
+
+//     await product.save();
+
+//   // Create Variants updated section to handle varient skus rolback and ensure uniqueness
+// const variantDocs = [];
+// for (const variant of variants) {
+//   const attrMap = new Map(Object.entries(variant.attributes || {}));
+//   const sku = await generateUniqueSKU(businessId, product._id, attrMap); // ✅ await it
+//   variantDocs.push({
+//     productId: product._id,
+//     businessId,
+//     ownerId: userId,
+//     attributes: attrMap,
+//     sku, // string, ready for Mongoose
+//     price: Decimal128.fromString(variant.price.toString()),
+//     salePrice: variant.salePrice ? Decimal128.fromString(variant.salePrice.toString()) : null,
+//     stock: variant.stock || 0,
+//     shipping: variant.shipping || { standard: 0, overnight: 0, local: 0 },
+//     images: variant.images || [],
+//     isPublished: isPublished || false,
+//   });
+// }
+
+//     // const variantDocs = variants.map((variant) => ({
+//     //   productId: product._id,
+//     //   businessId,
+//     //   ownerId: userId,
+//     //   attributes: new Map(Object.entries(variant.attributes || {})),
+//     //   sku: variant.sku || generateSKU(businessId, product._id, new Map(Object.entries(variant.attributes || {}))),
+//     //   price: Decimal128.fromString(variant.price?.toString() || '0'),
+//     //   salePrice: variant.salePrice ? Decimal128.fromString(variant.salePrice.toString()) : null,
+//     //   stock: variant.stock || 0,
+//     //   shipping: variant.shipping || null,
+//     //   images: variant.images || [],
+//     //   isPublished: isPublished || false,
+//     // }));
+
+//     let savedVariants;
+//     try {
+//       savedVariants = await ProductVariant.insertMany(variantDocs);
+//       const variantIds = savedVariants.map(v => v._id);
+//       await Product.findByIdAndUpdate(product._id, { $push: { variants: { $each: variantIds } } });
+
+//       // -----------------------------
+//       // Update product price as minimum variant price
+//       // -----------------------------
+//       const prices = savedVariants.map(v => parseFloat(v.price.toString()));
+//       const minPrice = Math.min(...prices);
+//       const maxPrice = Math.max(...prices);
+
+//       await Product.findByIdAndUpdate(product._id, {
+//         price: Decimal128.fromString(minPrice.toString()),
+//         maxPrice: Decimal128.fromString(maxPrice.toString()),
+//       });
+
+//     } catch (variantErr) {
+
+//   if (variantErr.code === 11000) {
+
+//     // Extract field & value from error message
+//     const regex = /dup key:\s*{\s*(\w+):\s*"?(.*?)"?\s*}/;
+//     const match = variantErr.message.match(regex);
+
+//     const field = match ? match[1] : "field";
+//     const value = match ? match[2] : "";
+
+//     return res.status(400).json({
+//       success: false,
+//       error: {
+//         type: "DUPLICATE_FIELD",
+//         field,
+//         message: `${field} '${value}' already exists. Please use a unique value.`
+//       }
+//     });
+//   }
+
+//   return res.status(400).json({
+//     success: false,
+//     error: {
+//       type: "VARIANT_CREATION_FAILED",
+//       message: "Something went wrong while creating product variants."
+//     }
+//   });
+// } 
+//     return res.status(201).json({
+//       message: 'Product and variants created successfully.',
+//       product: await Product.findById(product._id), // returns product with price
+//       variants: savedVariants,
+//     });
+
+//   } catch (err) {
+//     console.error('Error in product creation:', err);
+//     return res.status(500).json({ error: 'Server error while creating product.' });
+//   }
+// };
 
 /**
  * GET PRODUCT BY ID with variants
@@ -225,7 +509,8 @@ exports.getProductById = async (req, res) => {
 exports.updateProduct = async (req, res) => {
   try {
     const { productId } = req.params;
-    const ownerId = req.user._id;
+    const userId = req.user._id;
+
     const {
       title,
       description,
@@ -238,23 +523,27 @@ exports.updateProduct = async (req, res) => {
       metaFields,
       discount,
       isPublished,
+      variants
     } = req.body;
 
     const product = await Product.findById(productId);
+
     if (!product || product.isDeleted) {
-      return res.status(404).json({ error: 'Product not found' });
+      return res.status(404).json({ error: "Product not found" });
     }
 
-    if (product.ownerId.toString() !== ownerId.toString()) {
-      return res.status(403).json({ error: 'Unauthorized' });
+    if (product.ownerId.toString() !== userId.toString()) {
+      return res.status(403).json({ error: "Unauthorized" });
     }
 
-    // Handle cover image update
+    // Handle cover image change
     if (coverImage && product.coverImage !== coverImage) {
       await deleteCloudinaryFile(product.coverImage);
     }
 
-    // Update fields
+    // -----------------------------
+    // Update product fields
+    // -----------------------------
     product.title = title || product.title;
     product.description = description || product.description;
     product.categoryId = categoryId || product.categoryId;
@@ -265,28 +554,205 @@ exports.updateProduct = async (req, res) => {
     product.galleryImages = galleryImages || product.galleryImages;
     product.metaFields = metaFields || product.metaFields;
     product.discount = discount || product.discount;
-    product.isPublished = isPublished !== undefined ? isPublished : product.isPublished;
+    product.isPublished =
+      isPublished !== undefined ? isPublished : product.isPublished;
 
     await product.save();
 
-    // Update variants publish status to match product
-    if (isPublished !== undefined) {
-      await ProductVariant.updateMany(
-        { productId: product._id },
-        { $set: { isPublished } }
-      );
+    // -----------------------------
+    // Update / Create Variants
+    // -----------------------------
+    let savedVariants = [];
+
+    if (Array.isArray(variants) && variants.length > 0) {
+      // Get onboarding info once
+      const onboarding = await VendorOnboardingStage1.findOne({ userId });
+
+      // Collect frontend variant IDs
+      const frontendVariantIds = variants.filter(v => v._id).map(v => v._id.toString());
+
+      // Remove variants not in frontend payload
+      await ProductVariant.deleteMany({
+        productId,
+        _id: { $nin: frontendVariantIds }
+      });
+
+      for (const variant of variants) {
+        const attrMap = new Map(Object.entries(variant.attributes || {}));
+
+        // UPDATE existing variant
+        if (variant._id) {
+          const existingVariant = await ProductVariant.findOne({
+            _id: variant._id,
+            productId
+          });
+
+          if (existingVariant) {
+            existingVariant.attributes = attrMap;
+            existingVariant.price = Decimal128.fromString(
+              variant.price.toString()
+            );
+            existingVariant.salePrice = variant.salePrice
+              ? Decimal128.fromString(variant.salePrice.toString())
+              : null;
+            existingVariant.stock = variant.stock || 0;
+            existingVariant.shipping =
+              variant.shipping || { standard: 0, overnight: 0, local: 0 };
+            existingVariant.images = variant.images || [];
+            existingVariant.isPublished =
+              isPublished !== undefined ? isPublished : existingVariant.isPublished;
+
+            await existingVariant.save();
+            savedVariants.push(existingVariant);
+          }
+        } else {
+          // CREATE new variant with robust SKU logic
+          let sku = variant.sku;
+
+          // Generate SKU if not provided
+          if (!sku) {
+            sku = await generateUniqueSKU(product.businessId, product._id, attrMap);
+          }
+
+          // Add applicationId prefix if exists
+          if (onboarding?.applicationId) {
+            sku = `${onboarding.applicationId}-${sku}`;
+          }
+
+          // Ensure SKU is unique in DB
+          let existingSku = await ProductVariant.findOne({ sku });
+          if (existingSku) {
+            const newSku = await generateUniqueSKU(product.businessId, product._id, attrMap);
+            sku = onboarding?.applicationId ? `${onboarding.applicationId}-${newSku}` : newSku;
+          }
+
+          const newVariant = new ProductVariant({
+            productId,
+            businessId: product.businessId,
+            ownerId: userId,
+            attributes: attrMap,
+            sku,
+            price: Decimal128.fromString(variant.price.toString()),
+            salePrice: variant.salePrice
+              ? Decimal128.fromString(variant.salePrice.toString())
+              : null,
+            stock: variant.stock || 0,
+            shipping: variant.shipping || { standard: 0, overnight: 0, local: 0 },
+            images: variant.images || [],
+            isPublished: isPublished || false
+          });
+
+          await newVariant.save();
+          savedVariants.push(newVariant);
+        }
+      }
+    } else {
+      // If no variants sent, remove all variants
+      await ProductVariant.deleteMany({ productId });
+    }
+
+    // -----------------------------
+    // Recalculate product price based on min salePrice
+    // -----------------------------
+    const allVariants = await ProductVariant.find({ productId });
+
+    if (allVariants.length > 0) {
+      const prices = allVariants.map(v => {
+        const sale = v.salePrice ? parseFloat(v.salePrice.toString()) : null;
+        const price = parseFloat(v.price.toString());
+        return sale ?? price; // salePrice has priority
+      });
+
+      const minPrice = Math.min(...prices);
+      const maxPrice = Math.max(...prices);
+
+      product.price = Decimal128.fromString(minPrice.toString());
+      product.maxPrice = Decimal128.fromString(maxPrice.toString());
+      await product.save();
+    } else {
+      // No variants → reset product price
+      product.price = null;
+      product.maxPrice = null;
+      await product.save();
     }
 
     return res.status(200).json({
-      message: 'Product updated successfully',
+      success: true,
+      message: "Product and variants updated successfully",
       product,
+      variants: savedVariants
     });
-
   } catch (err) {
-    console.error('Error updating product:', err);
-    return res.status(500).json({ error: 'Internal server error' });
+    console.error("Error updating product:", err);
+    return res.status(500).json({ error: "Internal server error" });
   }
 };
+
+// exports.updateProduct = async (req, res) => {
+//   try {
+//     const { productId } = req.params;
+//     const ownerId = req.user._id;
+//     const {
+//       title,
+//       description,
+//       categoryId,
+//       subcategoryId,
+//       attributes,
+//       shipping,
+//       coverImage,
+//       galleryImages,
+//       metaFields,
+//       discount,
+//       isPublished,
+//     } = req.body;
+
+//     const product = await Product.findById(productId);
+//     if (!product || product.isDeleted) {
+//       return res.status(404).json({ error: 'Product not found' });
+//     }
+
+//     if (product.ownerId.toString() !== ownerId.toString()) {
+//       return res.status(403).json({ error: 'Unauthorized' });
+//     }
+
+//     // Handle cover image update
+//     if (coverImage && product.coverImage !== coverImage) {
+//       await deleteCloudinaryFile(product.coverImage);
+//     }
+
+//     // Update fields
+//     product.title = title || product.title;
+//     product.description = description || product.description;
+//     product.categoryId = categoryId || product.categoryId;
+//     product.subcategoryId = subcategoryId || product.subcategoryId;
+//     product.attributes = attributes || product.attributes;
+//     product.shipping = shipping || product.shipping;
+//     product.coverImage = coverImage || product.coverImage;
+//     product.galleryImages = galleryImages || product.galleryImages;
+//     product.metaFields = metaFields || product.metaFields;
+//     product.discount = discount || product.discount;
+//     product.isPublished = isPublished !== undefined ? isPublished : product.isPublished;
+
+//     await product.save();
+
+//     // Update variants publish status to match product
+//     if (isPublished !== undefined) {
+//       await ProductVariant.updateMany(
+//         { productId: product._id },
+//         { $set: { isPublished } }
+//       );
+//     }
+
+//     return res.status(200).json({
+//       message: 'Product updated successfully',
+//       product,
+//     });
+
+//   } catch (err) {
+//     console.error('Error updating product:', err);
+//     return res.status(500).json({ error: 'Internal server error' });
+//   }
+// };
 
 /**
  * DELETE PRODUCT (Soft delete)
@@ -520,6 +986,10 @@ exports.updateVariant = async (req, res) => {
     if (!product) {
       return res.status(404).json({ error: 'Product not found' });
     }
+
+    if (!mongoose.Types.ObjectId.isValid(variantId)) {
+  return res.status(400).json({ error: 'Invalid variant ID' });
+}
 
     const variant = await ProductVariant.findOne({ _id: variantId, productId });
     if (!variant) {

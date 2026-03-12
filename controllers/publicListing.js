@@ -2,6 +2,8 @@ const Service = require('../models/Service');
 const Review = require('../models/Review');
 const ServiceCategory = require('../models/ServiceCategory');
 const ServiceSubcategory = require('../models/ServiceSubcategory');
+const Business = require('../models/Business');
+const VendorOnboardingStage1 = require('../models/VendorOnboardingStage1');
 
 exports.getAllServices = async (req, res) => {
   try {
@@ -26,7 +28,13 @@ exports.getAllServices = async (req, res) => {
       badge,
     } = req.query;
 
-    const filters = { isPublished: true };
+    const filters = {};
+    const badgeValueMap = {
+      silver: 'Silver',
+      gold: 'Gold',
+      platinum: 'Platinum',
+      diamond: 'Diamond',
+    };
 
     // Search
     if (search) {
@@ -79,10 +87,43 @@ exports.getAllServices = async (req, res) => {
       }
     }
 
-    // Badge filtering
+    // Badge filtering via Business badge
     if (badge) {
-      const badges = Array.isArray(badge) ? badge : [badge];
-      filters.badge = { $in: badges };
+      const requestedBadges = (Array.isArray(badge) ? badge : [badge])
+        .flatMap((value) => String(value || '').split(','))
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean)
+        .map((value) => badgeValueMap[value] || value);
+
+      const badgeBusinesses = await Business.find({
+        badge: { $in: requestedBadges }
+      }).select('_id').lean();
+
+      const badgeBusinessIds = badgeBusinesses.map((b) => b._id.toString());
+
+      if (!badgeBusinessIds.length) {
+        return res.json({
+          success: true,
+          total: 0,
+          page: parseInt(page),
+          totalPages: 0,
+          data: [],
+        });
+      }
+
+      if (filters.businessId) {
+        if (!badgeBusinessIds.includes(String(filters.businessId))) {
+          return res.json({
+            success: true,
+            total: 0,
+            page: parseInt(page),
+            totalPages: 0,
+            data: [],
+          });
+        }
+      } else {
+        filters.businessId = { $in: badgeBusinessIds };
+      }
     }
 
     // Sorting
@@ -94,11 +135,65 @@ exports.getAllServices = async (req, res) => {
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    const services = await Service.find(filters)
-      .select('title services averageRating totalReviews slug description contact.address coverImage location price badge')
+    let services = await Service.find(filters)
+      .select('title services averageRating totalReviews slug description contact.address coverImage location price businessId')
       .sort(sortOption)
       .skip(skip)
-      .limit(parseInt(limit));
+      .limit(parseInt(limit))
+      .lean();
+
+    const serviceBusinessIds = [...new Set(
+      services
+        .map((service) => service.businessId?.toString())
+        .filter(Boolean)
+    )];
+
+    const serviceBusinesses = await Business.find({ _id: { $in: serviceBusinessIds } })
+      .select('_id businessName description logo email phone address socialLinks badge')
+      .lean();
+
+    const vendorDetails = await VendorOnboardingStage1.find({ businessId: { $in: serviceBusinessIds } })
+      .select('businessId businessBio primaryContactName primaryContactDesignation website facebook instagram linkedin twitter businessEmail businessPhone')
+      .lean();
+
+    const businessDetailsMap = new Map(
+      serviceBusinesses.map((business) => [business._id.toString(), business])
+    );
+
+    const vendorDetailsMap = new Map(
+      vendorDetails.map((vendor) => [vendor.businessId?.toString(), vendor])
+    );
+
+    services = services.map((service) => {
+      const businessId = service.businessId?.toString();
+      const businessInfo = businessDetailsMap.get(businessId);
+      const vendorInfo = vendorDetailsMap.get(businessId);
+      
+      return {
+        ...service,
+        businessDetails: {
+          businessName: businessInfo?.businessName || null,
+          description: businessInfo?.description || null,
+          bio: vendorInfo?.businessBio || null,
+          logo: businessInfo?.logo || null,
+          email: businessInfo?.email || vendorInfo?.businessEmail || null,
+          phone: businessInfo?.phone || vendorInfo?.businessPhone || null,
+          address: businessInfo?.address || null,
+          socialLinks: {
+            website: vendorInfo?.website || businessInfo?.socialLinks?.website || null,
+            facebook: vendorInfo?.facebook || businessInfo?.socialLinks?.facebook || null,
+            instagram: vendorInfo?.instagram || businessInfo?.socialLinks?.instagram || null,
+            linkedin: vendorInfo?.linkedin || businessInfo?.socialLinks?.linkedin || null,
+            twitter: vendorInfo?.twitter || businessInfo?.socialLinks?.twitter || null
+          },
+          contactPerson: {
+            name: vendorInfo?.primaryContactName || null,
+            designation: vendorInfo?.primaryContactDesignation || null
+          },
+          badge: businessInfo?.badge || null
+        }
+      };
+    });
 
     const total = await Service.countDocuments(filters);
 
@@ -180,7 +275,13 @@ exports.getAllFood = async (req, res) => {
       badge,
     } = req.query;
 
-    const filters = { isPublished: true };
+    const filters = {};
+    const badgeValueMap = {
+      silver: 'Silver',
+      gold: 'Gold',
+      platinum: 'Platinum',
+      diamond: 'Diamond',
+    };
 
     // Search filter
     if (search) {
@@ -243,10 +344,43 @@ exports.getAllFood = async (req, res) => {
       filters.price = { $gte: 0, $lte: 200 };
     }
 
-    // Badge filtering
+    // Badge filtering via Business badge
     if (badge) {
-      const badges = Array.isArray(badge) ? badge : [badge];
-      filters.badge = { $in: badges };
+      const requestedBadges = (Array.isArray(badge) ? badge : [badge])
+        .flatMap((value) => String(value || '').split(','))
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean)
+        .map((value) => badgeValueMap[value] || value);
+
+      const badgeBusinesses = await Business.find({
+        badge: { $in: requestedBadges }
+      }).select('_id').lean();
+
+      const badgeBusinessIds = badgeBusinesses.map((b) => b._id.toString());
+
+      if (!badgeBusinessIds.length) {
+        return res.json({
+          success: true,
+          total: 0,
+          page: parseInt(page),
+          totalPages: 0,
+          data: [],
+        });
+      }
+
+      if (filters.businessId) {
+        if (!badgeBusinessIds.includes(String(filters.businessId))) {
+          return res.json({
+            success: true,
+            total: 0,
+            page: parseInt(page),
+            totalPages: 0,
+            data: [],
+          });
+        }
+      } else {
+        filters.businessId = { $in: badgeBusinessIds };
+      }
     }
 
     // Sorting logic
@@ -259,11 +393,31 @@ exports.getAllFood = async (req, res) => {
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     // Fetching food items based on filters
-    const foodItems = await Food.find(filters)
-      .select('title description price slug coverImage badge')
+    let foodItems = await Food.find(filters)
+      .select('title description price slug coverImage businessId')
       .sort(sortOption)
       .skip(skip)
-      .limit(parseInt(limit));
+      .limit(parseInt(limit))
+      .lean();
+
+    const foodBusinessIds = [...new Set(
+      foodItems
+        .map((food) => food.businessId?.toString())
+        .filter(Boolean)
+    )];
+
+    const foodBusinesses = await Business.find({ _id: { $in: foodBusinessIds } })
+      .select('_id badge')
+      .lean();
+
+    const foodBadgeByBusinessId = new Map(
+      foodBusinesses.map((business) => [business._id.toString(), business.badge || null])
+    );
+
+    foodItems = foodItems.map((food) => ({
+      ...food,
+      badge: foodBadgeByBusinessId.get(food.businessId?.toString()) || null,
+    }));
 
     const total = await Food.countDocuments(filters);
 
@@ -310,6 +464,12 @@ exports.getAllProducts = async (req, res) => {
     } = req.query;
 
     const filters = { isDeleted: false, isPublished: true };
+    const badgeValueMap = {
+      silver: 'Silver',
+      gold: 'Gold',
+      platinum: 'Platinum',
+      diamond: 'Diamond',
+    };
 
     if (search) {
       filters.$or = [
@@ -346,22 +506,67 @@ exports.getAllProducts = async (req, res) => {
     if (outOfStock === 'true') filters.stockQuantity = { $lte: 0 };
 
     // Price filtering
-    if (price) {
-      const priceRange = price.split('-');
-      if (priceRange.length === 2) {
-        const minPrice = parseFloat(priceRange[0]);
-        const maxPrice = parseFloat(priceRange[1]);
-        filters.price = { $gte: minPrice, $lte: maxPrice };
-      }
-    } else {
-      // Default price range 0-200 when no price filter provided
-      filters.price = { $gte: 0, $lte: 200 };
-    }
+    // if (price) {
+    //   const priceRange = price.split('-');
+    //   if (priceRange.length === 2) {
+    //     const minPrice = parseFloat(priceRange[0]);
+    //     const maxPrice = parseFloat(priceRange[1]);
+    //     filters.price = { $gte: minPrice, $lte: maxPrice };
+    //   }
+    // } else {
+    //   filters.price = { $gte: 0, $lte: 200 };
+    // }
+    // Price filtering (only apply if user sends price query)
+if (price) {
+  const priceRange = price.split('-');
 
-    // Badge filtering
+  if (priceRange.length === 2) {
+    const minPrice = parseFloat(priceRange[0]);
+    const maxPrice = parseFloat(priceRange[1]);
+
+    if (!isNaN(minPrice) && !isNaN(maxPrice)) {
+      filters.price = { $gte: minPrice, $lte: maxPrice };
+    }
+  }
+}
+
+    // Badge filtering via Business badge
     if (badge) {
-      const badges = Array.isArray(badge) ? badge : [badge];
-      filters.badge = { $in: badges };
+      const requestedBadges = (Array.isArray(badge) ? badge : [badge])
+        .flatMap((value) => String(value || '').split(','))
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean)
+        .map((value) => badgeValueMap[value] || value);
+
+      const badgeBusinesses = await Business.find({
+        badge: { $in: requestedBadges }
+      }).select('_id').lean();
+
+      const badgeBusinessIds = badgeBusinesses.map((b) => b._id.toString());
+
+      if (!badgeBusinessIds.length) {
+        return res.json({
+          success: true,
+          total: 0,
+          page: parseInt(page),
+          totalPages: 0,
+          data: [],
+        });
+      }
+
+      if (filters.businessId) {
+        if (!badgeBusinessIds.includes(String(filters.businessId))) {
+          return res.json({
+            success: true,
+            total: 0,
+            page: parseInt(page),
+            totalPages: 0,
+            data: [],
+          });
+        }
+      } else {
+        filters.businessId = { $in: badgeBusinessIds };
+      }
     }
 
     let sortOption = { createdAt: -1 };
@@ -372,11 +577,38 @@ exports.getAllProducts = async (req, res) => {
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     let products = await Product.find(filters)
-      .select('title description coverImage slug brand categoryId subcategoryId badge price')
+      .select('title description coverImage slug brand categoryId subcategoryId price businessId')
       .sort(sortOption)
       .skip(skip)
       .limit(parseInt(limit))
       .lean();
+
+    const businessIds = [...new Set(
+      products
+        .map((product) => product.businessId?.toString())
+        .filter(Boolean)
+    )];
+
+    const businesses = await Business.find({ _id: { $in: businessIds } })
+      .select('_id badge')
+      .lean();
+
+    const badgeByBusinessId = new Map(
+      businesses.map((business) => [business._id.toString(), business.badge || null])
+    );
+
+    products = products.map((product) => ({
+      _id: product._id,
+      title: product.title,
+      description: product.description,
+      coverImage: product.coverImage,
+      slug: product.slug,
+      brand: product.brand,
+      categoryId: product.categoryId,
+      subcategoryId: product.subcategoryId,
+      price: product.price,
+      badge: badgeByBusinessId.get(product.businessId?.toString()) || null,
+    }));
 
     const total = await Product.countDocuments(filters);
     const totalPages = Math.ceil(total / limit);
@@ -397,6 +629,7 @@ exports.getAllProducts = async (req, res) => {
 
 
 exports.getProductsByFilters = async (req, res) => {
+  console.log('Received query parameters:', req.query);
   try {
     const {
       categorySlug,
@@ -535,61 +768,206 @@ exports.getProductsByFilters = async (req, res) => {
 
 
 
-// Route: /api/products/:productId
 
+// Route: /api/products/:productId
 exports.getProductById = async (req, res) => {
   try {
     const { productId } = req.params;
 
-    const product = await Product.findById(productId).lean();
+    const product = await Product.findById(productId)
+      .populate({
+        path: "businessId",
+        select: "businessName"
+      })
+      .lean();
 
     if (!product) {
-      return res.status(404).json({ success: false, message: 'Product not found' });
+      return res.status(404).json({
+        success: false,
+        message: "Product not found"
+      });
     }
 
-    const variants = await ProductVariant.find({ productId, isPublished: true, isDeleted: false })
-      .select('color label price sku weightInKg images videos allowBackorder totalReviews averageRating sizes')
-      .lean();
+    const variants = await ProductVariant.find({
+      productId,
+      isPublished: true,
+      isDeleted: false
+    }).lean();
 
     res.json({
       success: true,
       data: {
-        _id: product._id,
-        title: product.title,
-        description: product.description,
-        brand: product.brand,
-        categoryId: product.categoryId,
-        subcategoryId: product.subcategoryId,
-        businessId: product.businessId,
-        coverImage: product.coverImage,
-        specifications: product.specifications || [],
-        isPublished: product.isPublished,
-        variants: variants.map(variant => ({
-          variantId: variant._id,
-          color: variant.color,
-          label: variant.label,
-          allowBackorder: variant.allowBackorder,
-          images: variant.images,
-          videos: variant.videos,
-          averageRating: variant.averageRating,
-          totalReviews: variant.totalReviews,
-          sizes: variant.sizes?.map((size) => ({
-            sizeId: size._id,
-            size: size.size,
-            sku: size.sku,
-            stock: size.stock,
-            price: size.price ? Number(size.price) : 0,
-            salePrice: size.salePrice ? Number(size.salePrice) : null,
-            discountEndDate: size.discountEndDate ?? null,
-          })) || [],
+        ...product,
+
+        // Convert product price (Decimal128 → Number)
+        price: product.price ? Number(product.price) : null,
+
+        // Clean business object (id + name)
+        business: {
+          businessId: product.businessId?._id,
+          businessName: product.businessId?.businessName
+        },
+
+        variants: variants.map(({ _id, ...rest }) => ({
+          variantId: _id,
+          ...rest,
+          price: rest.price ? Number(rest.price) : 0,
+          salePrice: rest.salePrice ? Number(rest.salePrice) : null
         }))
       }
     });
 
   } catch (err) {
-    console.error('Error fetching product details:', err);
-    res.status(500).json({ success: false, message: 'Server error' });
+    console.error("Error fetching product details:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server error"
+    });
   }
 };
 
+// exports.getProductById = async (req, res) => {
+//   try {
+//     const { productId } = req.params;
 
+//     const product = await Product.findById(productId).lean();
+
+//     if (!product) {
+//       return res.status(404).json({ success: false, message: 'Product not found' });
+//     }
+// const variants = await ProductVariant.find({ 
+//   productId, 
+//   isPublished: true, 
+//   isDeleted: false 
+// }).lean();
+
+//     // const variants = await ProductVariant.find({ productId, isPublished: true, isDeleted: false })
+//     //   .select('color label price sku weightInKg images videos allowBackorder totalReviews averageRating sizes')
+//     //   .lean();
+
+//     res.json({
+//       success: true,
+//       data: {
+//         _id: product._id,
+//         title: product.title,
+//         description: product.description,
+//         brand: product.brand,
+//         categoryId: product.categoryId,
+//         subcategoryId: product.subcategoryId,
+//         businessId: product.businessId,
+//         coverImage: product.coverImage,
+//         specifications: product.specifications || [],
+//         isPublished: product.isPublished,
+//         variants: variants.map(variant => ({
+//           variantId: variant._id,
+//           color: variant.color,
+//           label: variant.label,
+//           allowBackorder: variant.allowBackorder,
+//           images: variant.images,
+//           videos: variant.videos,
+//           averageRating: variant.averageRating,
+//           totalReviews: variant.totalReviews,
+//           sizes: variant.sizes?.map((size) => ({
+//             sizeId: size._id,
+//             size: size.size,
+//             sku: size.sku,
+//             stock: size.stock,
+//             price: size.price ? Number(size.price) : 0,
+//             salePrice: size.salePrice ? Number(size.salePrice) : null,
+//             discountEndDate: size.discountEndDate ?? null,
+//           })) || [],
+//         }))
+//       }
+//     });
+
+//   } catch (err) {
+//     console.error('Error fetching product details:', err);
+//     res.status(500).json({ success: false, message: 'Server error' });
+//   }
+// };
+
+
+
+exports.getVendorProfile = async (req, res) => {
+  try {
+    const { businessId } = req.params;
+
+    const business = await Business.findOne({
+      _id: businessId
+    })
+    .select('businessName description logo coverImage email phone address socialLinks website listingType badge metrics businessHours')
+    .lean();
+
+    if (!business) {
+      return res.status(404).json({
+        success: false,
+        message: 'Business not found'
+      });
+    }
+
+    const vendorOnboarding = await VendorOnboardingStage1.findOne({
+      businessId
+    })
+    .select('primaryContactName primaryContactDesignation businessBio website facebook instagram linkedin tiktok twitter businessEmail businessPhone alternatePhone address yearsInBusiness ownershipType employeesCount minorityCategories googleReviewLink communityServiceLink')
+    .lean();
+
+    res.json({
+      success: true,
+      data: {
+        business,
+        vendorDetails: vendorOnboarding || null
+      }
+    });
+
+  } catch (err) {
+    console.error('Error fetching vendor profile:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+};
+
+exports.getProductsByBusinessId = async (req, res) => {
+  try {
+    const { businessId } = req.params;
+    const { page = 1, limit = 10, sort } = req.query;
+
+    const filters = { 
+      businessId, 
+      isDeleted: false, 
+      isPublished: true 
+    };
+
+    let sortOption = { createdAt: -1 };
+    if (sort === 'price_asc') sortOption = { price: 1 };
+    if (sort === 'price_desc') sortOption = { price: -1 };
+    if (sort === 'rating') sortOption = { averageRating: -1 };
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const products = await Product.find(filters)
+      .select('title description coverImage slug brand price averageRating totalReviews')
+      .sort(sortOption)
+      .skip(skip)
+      .limit(parseInt(limit))
+      .lean();
+
+    const total = await Product.countDocuments(filters);
+
+    res.json({
+      success: true,
+      total,
+      page: parseInt(page),
+      totalPages: Math.ceil(total / limit),
+      data: products
+    });
+
+  } catch (err) {
+    console.error('Error fetching products by business ID:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+};

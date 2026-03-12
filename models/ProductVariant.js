@@ -64,7 +64,6 @@ const productVariantSchema = new mongoose.Schema({
 
   images: {
     type: [String],
-    required: true,
   },
 
   isPublished: { type: Boolean, default: false },

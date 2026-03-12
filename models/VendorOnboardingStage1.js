@@ -9,6 +9,11 @@ const VendorOnboardingStage1Schema = new mongoose.Schema(
       unique: true,
       index: true,
     },
+    businessId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Business",
+      index: true,
+    },
     applicationId: {
       type: String,
       unique: true,
@@ -160,6 +165,11 @@ const VendorOnboardingStage1Schema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+
+    badge: {
+      type: String,
+      enum: ["Bronze", "Silver", "Gold", "Platinum", "Diamond"],
+    },
     
     verificationChecklist: {
       minorityDocs: { type: Boolean, default: false },
@@ -170,6 +180,12 @@ const VendorOnboardingStage1Schema = new mongoose.Schema(
       instagram: { type: Boolean, default: false },
       linkedin: { type: Boolean, default: false },
       tiktok: { type: Boolean, default: false },
+      businessProfileImage: { type: Boolean, default: false },
+      businessBio: { type: Boolean, default: false },
+      refundPolicyDocument: { type: Boolean, default: false },
+      termsDocument: { type: Boolean, default: false },
+      googleReviewLink: { type: Boolean, default: false },
+      communityServiceLink: { type: Boolean, default: false },
     },
 
     /* ===== ADDED MISSING FIELDS FROM SCREENSHOT ===== */
@@ -186,6 +202,11 @@ const VendorOnboardingStage1Schema = new mongoose.Schema(
     businessBio: String,
     characterLimit: Number,
     businessProfileImage: {
+      url: String,
+      verified: { type: Boolean, default: false }
+    },
+    
+    featureBanner: {
       url: String,
       verified: { type: Boolean, default: false }
     },
@@ -218,6 +239,13 @@ VendorOnboardingStage1Schema.pre("save", function (next) {
   if (!this.applicationId) {
     const random = Math.random().toString(36).substring(2, 8).toUpperCase();
     this.applicationId = `MBH-APP-${Date.now()}-${random}`;
+  }
+  next();
+});
+
+VendorOnboardingStage1Schema.pre("validate", function (next) {
+  if (this.badge === "Bronze") {
+    this.badge = "Silver";
   }
   next();
 });

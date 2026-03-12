@@ -5,7 +5,8 @@ const foodSchema = new mongoose.Schema(
   {
     title: {
       type: String,
-      required: true,
+      required: false,
+      default: 'Food',
       trim: true,
     },
     slug: {
@@ -15,43 +16,81 @@ const foodSchema = new mongoose.Schema(
     },
     description: {
       type: String,
-      required: true,
+      required: false,
+      default: '',
     },
     price: {
       type: Number,
-      required: true,
+      required: false,
+      default: 0,
       min: 0,
+    },
+    coverImage: {
+      type: String,
+      default: '',
     },
     images: {
       type: [String],
-      required: true,
-      validate: {
-        validator: (val) => val.length > 0,
-        message: 'At least one image is required.',
-      },
+      default: [],
+    },
+    menuImage: {
+      type: String,
+      default: '',
     },
     categoryId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'FoodCategory',
       required: true,
     },
-        subcategoryId: {
+    subcategoryId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'FoodSubcategory',
       required: true,
     },
-    location: {
-      type: {
-        type: String,
-        enum: ['Point'],
-        default: 'Point',
-        required: true,
-      },
-      coordinates: {
-        type: [Number], // [longitude, latitude]
-        required: true,
-      },
+    businessName: {
+      type: String,
+      default: '',
+      trim: true,
     },
+    minorityType: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'MinorityType',
+    },
+location: {
+  type: {
+    type: String,
+    enum: ['Point'],
+  },
+  coordinates: {
+    type: [Number], // [lng, lat]
+  },
+  address: String
+},
+    businessHours: [
+      {
+        day: { type: String, required: true },
+        hours: { type: String, required: true },
+        closed: { type: Boolean, default: false },
+      },
+    ],
+    bookingToolLink: {
+      type: String,
+      trim: true,
+      default: '',
+      validate: {
+        validator: function (v) {
+          if (!v) return true;
+          return /^https?:\/\/.+\..+/.test(v);
+        },
+        message: 'Please enter a valid URL (must start with http or https).'
+      }
+    },
+    metaFields: [
+      {
+        key: { type: String, trim: true },
+        value: { type: String, trim: true },
+      },
+    ],
     ownerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
@@ -64,8 +103,8 @@ const foodSchema = new mongoose.Schema(
     },
     foodType: {
       type: String,
-      enum: ['shop', 'farm', 'restaurant'],
-      required: true,
+      required: false,
+      default: '',
     },
     brand: {
       type: String, // Optional: used only for Shop foods
@@ -123,8 +162,5 @@ foodSchema.pre('save', async function (next) {
   }
   next();
 });
-
-// Index for location-based search
-foodSchema.index({ location: '2dsphere' });
 
 module.exports = mongoose.model('Food', foodSchema);

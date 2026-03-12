@@ -19,6 +19,228 @@ const s3Client = new S3Client({
   },
 });
 
+// Create parent service with minimal details (ONE per business)
+exports.createParentService = async (req, res) => {
+  const session = await Service.startSession();
+  session.startTransaction();
+  
+  try {
+    const {
+      title,
+      description,
+      categoryId,
+      subcategoryId,
+      businessId,
+      coverImage,
+      images,
+      location,
+      businessHours,
+      bookingToolLink
+    } = req.body;
+   console.log(req.body,"servisce bod")
+    const userId = req.user._id;
+
+    // Check if parent service already exists for this business
+    const existingParentService = await Service.findOne({ 
+      businessId, 
+      ownerId: userId 
+    });
+    
+    if (existingParentService) {
+      return res.status(400).json({ 
+        error: 'Parent service already exists for this business. You can only add child services now.',
+        existingService: existingParentService
+      });
+    }
+
+    // Verify business ownership
+    const business = await Business.findOne({ _id: businessId, owner: userId });
+    if (!business)
+      return res.status(403).json({ error: 'You do not own this business.' });
+
+    // Subscription check
+    const subscription = await Subscription.findOne({
+      userId,
+      status: 'active',
+      endDate: { $gte: new Date() },
+    }).sort({ createdAt: -1 });
+
+    if (!subscription)
+      return res.status(403).json({ error: 'Valid subscription not found.' });
+
+    const subscriptionPlan = await SubscriptionPlan.findById(subscription.subscriptionPlanId);
+    const serviceLimit = subscriptionPlan?.limits?.serviceListings || 0;
+    const existingServiceCount = await Service.countDocuments({ ownerId: userId });
+
+    if (existingServiceCount >= serviceLimit) {
+      return res.status(403).json({
+        error: `Service listing limit reached for your subscription. You can add up to ${serviceLimit} services.`,
+      });
+    }
+
+    // Create parent service
+    const service = new Service({
+      title: title || 'Service',
+      description: description || '',
+      price: 0,
+      duration: '60 minutes',
+      
+      categoryId,
+      subcategoryId,
+      businessId,
+      coverImage: coverImage || '',
+      images: images || [],
+      location: location?.address || '',
+      businessHours: businessHours || [],
+      bookingToolLink: bookingToolLink || '',
+      
+      services: [],
+      
+      contact: {
+        phone: '',
+        email: '',
+        address: location?.address || '',
+        website: ''
+      },
+      
+      ownerId: userId,
+      minorityType: business.minorityType,
+      isPublished: false,
+      maxBookingsPerSlot: 1,
+      features: [],
+      amenities: [],
+      videos: [],
+      faq: []
+    });
+
+    await service.save();
+
+    // Clean up pending images
+    const usedImages = [coverImage, ...(images || [])].filter(Boolean);
+    if (usedImages.length > 0) {
+      await PendingImage.deleteMany({ url: { $in: usedImages } });
+    }
+
+    await session.commitTransaction();
+    session.endSession();
+
+    res.status(201).json({
+      message: 'Parent service created successfully. You can now add child services.',
+      service,
+    });
+    
+  } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
+
+    console.error('Parent service creation failed:', err.message);
+    return res.status(400).json({ error: err.message || 'Failed to create parent service' });
+  }
+};
+
+// Create parent service with minimal details
+exports.createParentService = async (req, res) => {
+  const session = await Service.startSession();
+  session.startTransaction();
+  
+  try {
+    const {
+      title,
+      description,
+      categoryId,
+      subcategoryId,
+      businessId,
+      coverImage,
+      images,
+      location,
+      businessHours,
+      bookingToolLink
+    } = req.body;
+
+    const userId = req.user._id;
+
+    // Verify business ownership
+    const business = await Business.findOne({ _id: businessId, owner: userId });
+    if (!business)
+      return res.status(403).json({ error: 'You do not own this business.' });
+
+    // Subscription check
+    const subscription = await Subscription.findOne({
+      userId,
+      status: 'active',
+      endDate: { $gte: new Date() },
+    }).sort({ createdAt: -1 });
+
+    if (!subscription)
+      return res.status(403).json({ error: 'Valid subscription not found.' });
+
+    const subscriptionPlan = await SubscriptionPlan.findById(subscription.subscriptionPlanId);
+    const serviceLimit = subscriptionPlan?.limits?.serviceListings || 0;
+    const existingServiceCount = await Service.countDocuments({ ownerId: userId });
+
+    if (existingServiceCount >= serviceLimit) {
+      return res.status(403).json({
+        error: `Service listing limit reached for your subscription. You can add up to ${serviceLimit} services.`,
+      });
+    }
+
+    // Create parent service with minimal required fields
+    const service = new Service({
+      title: title || 'Service',
+      description: description || '',
+      price: 0, // Will be updated when child services are added
+      duration: '60 minutes',
+      
+      categoryId,
+      subcategoryId,
+      businessId,
+      coverImage: coverImage || '',
+      images: Array.isArray(images) ? images.filter(Boolean) : [],
+      location: location?.address || '',
+      businessHours: businessHours || [],
+      bookingToolLink: bookingToolLink || '',
+      
+      // Empty arrays for child services to be added later
+      services: [],
+      images: [],
+      
+      contact: {
+        phone: '',
+        email: '',
+        address: location?.address || '',
+        website: ''
+      },
+      
+      ownerId: userId,
+      minorityType: business.minorityType,
+      isPublished: false, // Keep unpublished until child services are added
+      maxBookingsPerSlot: 1,
+      features: [],
+      amenities: [],
+      videos: [],
+      faq: []
+    });
+
+    await service.save();
+
+    await session.commitTransaction();
+    session.endSession();
+
+    res.status(201).json({
+      message: 'Parent service created successfully. You can now add child services.',
+      service,
+    });
+    
+  } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
+
+    console.error('Parent service creation failed:', err.message);
+    return res.status(400).json({ error: err.message || 'Failed to create parent service' });
+  }
+};
+
+
 exports.createService = async (req, res) => {
   const session = await Service.startSession();
   session.startTransaction();
@@ -41,18 +263,18 @@ exports.createService = async (req, res) => {
 
     // 🛡️ Step 1: Verify ownership
     const business = await Business.findOne({ _id: businessId, owner: userId });
-    if (!business)
-      return res.status(403).json({ error: 'You do not own this business.' });
+    // if (!business)
+    //   return res.status(403).json({ error: 'You do not own this business.' });
 
-    if (!business.isApproved)
-      return res.status(400).json({ error: 'Business is not approved yet.' });
+    // if (!business.isApproved)
+    //   return res.status(400).json({ error: 'Business is not approved yet.' });
 
-    if (business.listingType !== 'service')
-      return res.status(400).json({ error: 'This business is not allowed to list services.' });
+    // if (business.listingType !== 'service')
+    //   return res.status(400).json({ error: 'This business is not allowed to list services.' });
 
     // 📅 Step 2: Subscription check
     const subscription = await Subscription.findOne({
-      userId: userId,
+      userId,
       status: 'active',
       endDate: { $gte: new Date() },
     }).sort({ createdAt: -1 });
@@ -71,15 +293,29 @@ exports.createService = async (req, res) => {
       });
     }
 
-    // ✅ Step 3: Save service with defaults for optional fields
+    // ------------------------
+    // Step 3: Determine default parent price from child services
+    // ------------------------
+    let defaultPrice = 0;
+    if (Array.isArray(services) && services.length > 0) {
+      const childPrices = services
+        .map(s => parseFloat(s.price) || 0)
+        .filter(p => p >= 0);
+
+      if (childPrices.length > 0) {
+        defaultPrice = Math.min(...childPrices);
+      }
+    }
+
+    // ------------------------
+    // Step 4: Save service with defaults
+    // ------------------------
     const service = new Service({
-      // Default values for required fields
       title: 'Service',
       description: '',
-      price: 0,
+      price: defaultPrice, // <-- Set parent price as minimum of children
       duration: '60 minutes',
       
-      // Your actual data
       categoryId,
       subcategoryId,
       businessId,
@@ -91,7 +327,6 @@ exports.createService = async (req, res) => {
       businessHours: businessHours || [],
       location: location?.address || '',
       
-      // Default contact
       contact: {
         phone: '',
         email: '',
@@ -140,7 +375,286 @@ exports.createService = async (req, res) => {
   }
 };
 
+
+// exports.createService = async (req, res) => {
+//   const session = await Service.startSession();
+//   session.startTransaction();
+  
+//   try {
+//     const {
+//       categoryId,
+//       subcategoryId,
+//       businessId,
+//       bookingToolLink,
+//       services,
+//       coverImage,
+//       images,
+//       businessHours,
+//       location,
+//       isPublished,
+//     } = req.body;
+
+//     const userId = req.user._id;
+
+//     // 🛡️ Step 1: Verify ownership
+//     const business = await Business.findOne({ _id: businessId, owner: userId });
+//     if (!business)
+//       return res.status(403).json({ error: 'You do not own this business.' });
+
+//     if (!business.isApproved)
+//       return res.status(400).json({ error: 'Business is not approved yet.' });
+
+//     if (business.listingType !== 'service')
+//       return res.status(400).json({ error: 'This business is not allowed to list services.' });
+
+//     // 📅 Step 2: Subscription check
+//     const subscription = await Subscription.findOne({
+//       userId: userId,
+//       status: 'active',
+//       endDate: { $gte: new Date() },
+//     }).sort({ createdAt: -1 });
+
+//     if (!subscription)
+//       return res.status(403).json({ error: 'Valid subscription not found.' });
+
+//     const subscriptionPlan = await SubscriptionPlan.findById(subscription.subscriptionPlanId);
+//     const serviceLimit = subscriptionPlan?.limits?.serviceListings || 0;
+
+//     const existingServiceCount = await Service.countDocuments({ ownerId: userId });
+
+//     if (existingServiceCount >= serviceLimit) {
+//       return res.status(403).json({
+//         error: `Service listing limit reached for your subscription. You can add up to ${serviceLimit} services.`,
+//       });
+//     }
+
+//     // ✅ Step 3: Save service with defaults for optional fields
+//     const service = new Service({
+//       // Default values for required fields
+//       title: 'Service',
+//       description: '',
+//       price: 0,
+//       duration: '60 minutes',
+      
+//       // Your actual data
+//       categoryId,
+//       subcategoryId,
+//       businessId,
+//       bookingToolLink: bookingToolLink || '',
+//       services: services || [],
+//       coverImage: coverImage || '',
+//       images: images || [],
+//       isPublished: isPublished || false,
+//       businessHours: businessHours || [],
+//       location: location?.address || '',
+      
+//       // Default contact
+//       contact: {
+//         phone: '',
+//         email: '',
+//         address: location?.address || '',
+//         website: ''
+//       },
+      
+//       ownerId: userId,
+//       minorityType: business.minorityType,
+//       maxBookingsPerSlot: 1,
+//       features: [],
+//       amenities: [],
+//       videos: [],
+//       faq: []
+//     });
+
+//     await service.save();
+
+//     // Clean up pending images
+//     const usedImages = [coverImage, ...(images || [])].filter(Boolean);
+//     if (usedImages.length > 0) {
+//       await PendingImage.deleteMany({ url: { $in: usedImages } });
+//     }
+
+//     await session.commitTransaction();
+//     session.endSession();
+
+//     res.status(201).json({
+//       message: 'Service created successfully.',
+//       service,
+//     });
+    
+//   } catch (err) {
+//     await session.abortTransaction();
+//     session.endSession();
+
+//     // Clean up uploaded images on error
+//     const usedImages = [req.body.coverImage, ...(req.body.images || [])].filter(Boolean);
+//     for (const image of usedImages) {
+//       await deleteCloudinaryFile(image).catch(() => {});
+//       await PendingImage.deleteOne({ url: image }).catch(() => {});
+//     }
+
+//     console.error('Service creation failed:', err.message);
+//     return res.status(400).json({ error: err.message || 'Failed to create service' });
+//   }
+// };
+
 // Other functions remain the same but with updated field references
+
+
+
+// Get parent services (services without child services or with empty services array)
+exports.getParentServices = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    
+    const parentServices = await Service.find({
+      ownerId: userId,
+      $or: [
+        { services: { $exists: false } },
+        { services: { $size: 0 } }
+      ]
+    }).populate('categoryId subcategoryId businessId');
+
+    res.status(200).json({
+      message: 'Parent services retrieved successfully.',
+      services: parentServices
+    });
+  } catch (err) {
+    console.error('Failed to get parent services:', err.message);
+    return res.status(400).json({ error: err.message || 'Failed to get parent services' });
+  }
+};
+
+// Get child services of a specific parent service
+exports.getChildServices = async (req, res) => {
+  try {
+    const { parentServiceId } = req.params;
+    const userId = req.user._id;
+    
+    const parentService = await Service.findOne({
+      _id: parentServiceId,
+      ownerId: userId
+    });
+
+    if (!parentService) {
+      return res.status(404).json({ error: 'Parent service not found.' });
+    }
+
+    res.status(200).json({
+      message: 'Child services retrieved successfully.',
+      childServices: parentService.services || [],
+      parentService: {
+        id: parentService._id,
+        title: parentService.title,
+        description: parentService.description
+      }
+    });
+  } catch (err) {
+    console.error('Failed to get child services:', err.message);
+    return res.status(400).json({ error: err.message || 'Failed to get child services' });
+  }
+};
+
+// Add child services to existing parent service
+exports.addChildServices = async (req, res) => {
+  try {
+    const { parentServiceId, businessId, childServices, coverImage, images } = req.body;
+    const userId = req.user._id;
+
+    if (!Array.isArray(childServices) || childServices.length === 0) {
+      return res.status(400).json({ error: 'childServices must be a non-empty array.' });
+    }
+
+    const withBusinessOwner = (query) => query.populate('businessId', 'owner');
+
+    let parentService = null;
+
+    // 1) Standard lookup using parent service id
+    if (parentServiceId) {
+      parentService = await withBusinessOwner(Service.findById(parentServiceId));
+    }
+
+    // 2) Lookup by business id when frontend sends businessId
+    if (!parentService && businessId) {
+      parentService = await withBusinessOwner(
+        Service.findOne({ businessId }).sort({ createdAt: -1 })
+      );
+    }
+
+    // 3) Backward-compatible fallback: treat parentServiceId as businessId
+    if (!parentService && parentServiceId) {
+      parentService = await withBusinessOwner(
+        Service.findOne({ businessId: parentServiceId }).sort({ createdAt: -1 })
+      );
+    }
+
+    if (!parentService) {
+      return res.status(404).json({ error: 'Parent service not found for provided parentServiceId/businessId.' });
+    }
+
+    const isOwner = parentService.ownerId && String(parentService.ownerId) === String(userId);
+    const isBusinessOwnerUser =
+      parentService.businessId &&
+      parentService.businessId.owner &&
+      String(parentService.businessId.owner) === String(userId);
+
+    if (!isOwner && !isBusinessOwnerUser) {
+      return res.status(403).json({ error: 'You do not own this parent service/business.' });
+    }
+
+    // Add new child services to existing ones
+    const normalizedChildServices = childServices.map((item) => {
+      const normalizedImages = Array.isArray(item.images)
+        ? item.images.filter(Boolean)
+        : [];
+      const fallbackImage = item.image || item.imagePath || item.path || normalizedImages[0] || '';
+
+      return {
+        ...item,
+        image: fallbackImage,
+        images: normalizedImages.length ? normalizedImages : (fallbackImage ? [fallbackImage] : [])
+      };
+    });
+
+    const updatedChildServices = [...parentService.services, ...normalizedChildServices];
+    
+    // Update parent service price to minimum of all child services
+    const allPrices = updatedChildServices
+      .map(s => parseFloat(s.price) || 0)
+      .filter(p => p >= 0);
+    
+    const newParentPrice = allPrices.length > 0 ? Math.min(...allPrices) : parentService.price;
+
+    const updatePayload = {
+      services: updatedChildServices,
+      price: newParentPrice
+    };
+
+    // Optional parent media updates in same request
+    if (coverImage !== undefined) {
+      updatePayload.coverImage = coverImage || '';
+    }
+    if (images !== undefined) {
+      updatePayload.images = Array.isArray(images) ? images.filter(Boolean) : [];
+    }
+
+    // Update the parent service
+    const updatedService = await Service.findByIdAndUpdate(
+      parentService._id,
+      updatePayload,
+      { new: true }
+    );
+
+    res.status(200).json({
+      message: 'Child services added successfully.',
+      service: updatedService
+    });
+
+  } catch (err) {
+    console.error('Failed to add child services:', err.message);
+    return res.status(400).json({ error: err.message || 'Failed to add child services' });
+  }
+};
+
 exports.getMyServices = async (req, res) => {
   try {
     const userId = req.user._id;
@@ -287,6 +801,116 @@ exports.getServiceById = async (req, res) => {
   }
 };
 
+exports.getBusinessServiceById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const populateService = (query) =>
+      query
+        .populate('categoryId', 'name')
+        .populate('subcategoryId', 'name')
+        .populate('businessId', 'businessName owner');
+
+    // Supports both serviceId and businessId on the same endpoint param.
+    let service = await populateService(Service.findById(id));
+    if (!service) {
+      service = await populateService(
+        Service.findOne({ businessId: id }).sort({ createdAt: -1 })
+      );
+    }
+
+    if (!service) {
+      return res.status(404).json({
+        message: 'Business service not found.'
+      });
+    }
+
+    const childServices = Array.isArray(service.services) ? service.services : [];
+    const hasChildServices = childServices.length > 0;
+
+    const mappedBusinessHours = (Array.isArray(service.businessHours) ? service.businessHours : []).map((slot) => {
+      let openTime = slot.openTime || '';
+      let closeTime = slot.closeTime || '';
+      let isOpen = typeof slot.isOpen === 'boolean' ? slot.isOpen : true;
+
+      if ((!openTime || !closeTime) && typeof slot.hours === 'string') {
+        const parts = slot.hours.split('-').map((part) => part.trim());
+        if (parts.length === 2) {
+          openTime = openTime || parts[0];
+          closeTime = closeTime || parts[1];
+        }
+      }
+
+      if (typeof slot.closed === 'boolean') {
+        isOpen = !slot.closed;
+      }
+
+      return {
+        day: slot.day || '',
+        openTime,
+        closeTime,
+        isOpen
+      };
+    });
+
+    const mappedService = {
+      _id: service._id,
+      title: service.title || '',
+      description: service.description || '',
+      price: typeof service.price === 'number' ? service.price : 0,
+      duration: service.duration || '',
+      categoryId: service.categoryId
+        ? {
+            _id: service.categoryId._id,
+            name: service.categoryId.name || ''
+          }
+        : null,
+      subcategoryId: service.subcategoryId
+        ? {
+            _id: service.subcategoryId._id,
+            name: service.subcategoryId.name || ''
+          }
+        : null,
+      businessId: service.businessId
+        ? {
+            _id: service.businessId._id,
+            name: service.businessId.businessName || service.businessId.name || '',
+            owner: service.businessId.owner || null
+          }
+        : null,
+      coverImage: service.coverImage || '',
+      images: Array.isArray(service.images) ? service.images : [],
+      location: service.location || '',
+      businessHours: mappedBusinessHours,
+      bookingToolLink: service.bookingToolLink || '',
+      services: childServices.map((item) => ({
+        name: item.name || '',
+        price: typeof item.price === 'number' ? item.price : 0,
+        duration: item.duration || (item.durationMinutes ? `${item.durationMinutes} minutes` : ''),
+        description: item.description || '',
+        image: item.image || (Array.isArray(item.images) ? item.images[0] : '') || '',
+        images: Array.isArray(item.images)
+          ? item.images
+          : (item.image ? [item.image] : [])
+      })),
+      isPublished: Boolean(service.isPublished),
+      ownerId: service.ownerId,
+      createdAt: service.createdAt,
+      updatedAt: service.updatedAt
+    };
+
+    return res.status(200).json({
+      message: 'Business service retrieved successfully.',
+      service: mappedService,
+      hasChildServices
+    });
+  } catch (err) {
+    console.error('Failed to fetch business service:', err.message);
+    return res.status(500).json({
+      message: 'Internal server error'
+    });
+  }
+};
+
 
 
 exports.getServiceUploadUrl = async (req, res) => {
@@ -380,3 +1004,4 @@ exports.getServiceUploadUrl = async (req, res) => {
     });
   }
 };
+

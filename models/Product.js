@@ -43,6 +43,11 @@ const productSchema = new mongoose.Schema({
     required: true,
   },
 
+  price: {
+  type: mongoose.Schema.Types.Decimal128, // same type as variant price
+  default: null, // null if no variants yet
+},
+
   /* ===============================
      ATTRIBUTES (Size, Color etc.)
   =============================== */
@@ -96,7 +101,7 @@ const productSchema = new mongoose.Schema({
   discount: {
     type: {
       type: String,
-      enum: ['value', 'percentage'],
+      enum: ['fixed', 'percentage'],
     },
     amount: Number,
     minCartValue: Number

@@ -74,7 +74,7 @@ router.post(
   '/',
   authenticate,
   isBusinessOwner,
-  validateProductInput,
+  // validateProductInput,
   createProductWithVariants
 );
 
@@ -139,7 +139,7 @@ router.post(
   '/add-variants/:productId',
   authenticate,
   isBusinessOwner,
-  validateVariantInput,
+  // validateVariantInput,
   addVariants
 );
 
@@ -152,7 +152,7 @@ router.put(
   '/update-variant/:productId/:variantId',
   authenticate,
   isBusinessOwner,
-  validateUpdateVariantInput,
+  // validateUpdateVariantInput,
   updateVariant
 );
 

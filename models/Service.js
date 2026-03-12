@@ -40,6 +40,15 @@ const serviceSchema = new mongoose.Schema({
         type: String,
         trim: true,
       },
+      image: {
+        type: String,
+        trim: true,
+        default: '',
+      },
+      images: {
+        type: [String],
+        default: [],
+      },
       durationMinutes: {
         type: Number,
         required: true,

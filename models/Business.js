@@ -150,11 +150,30 @@ const businessSchema = new mongoose.Schema(
       default: true,
     },
     approvalDate: Date,
-    
+
+    // ===== VERIFICATION SCORE & BADGE =====
+    points: {
+      type: Number,
+      default: 0,
+    },
+    badge: {
+      type: String,
+      enum: ["Bronze","Silver", "Gold", "Platinum", "Diamond"],
+    },
     // ===== STRIPE CONNECT (FOR PAYOUTS) =====
     stripeConnectAccountId: String,
-    chargesEnabled: { type: Boolean, default: false },
+    chargesEnabled: { type: Boolean, default: false },  
     payoutsEnabled: { type: Boolean, default: false },
+    onboardingStatus: {
+      type: String,
+      enum: ["not_started", "in_progress", "requirements_due", "completed"],
+      default: "not_started",
+    },
+    capabilities: {
+      card_payments: { type: String, default: "inactive" },
+      transfers: { type: String, default: "inactive" },
+    },
+    onboardedAt: Date,
     stripeCustomerId: String,
     
     // ===== FEATURED STATUS =====
@@ -249,6 +268,13 @@ businessSchema.methods.getLimits = async function() {
 };
 
 // ===== PRE-SAVE HOOK FOR SLUG =====
+businessSchema.pre("validate", function (next) {
+  if (this.badge === "Bronze") {
+    this.badge = "Silver";
+  }
+  next();
+});
+
 businessSchema.pre("save", async function (next) {
   if (!this.slug && this.businessName) {
     let baseSlug = slugify(this.businessName, { lower: true, strict: true });
