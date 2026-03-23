@@ -52,31 +52,44 @@ exports.sendAdminOnboardingSubmissionEmail = async ({
   businessName,
   vendorName,
 }) => {
+  const submissionDate = new Date().toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+
   const mailOptions = {
-    from: `"Mosaic Biz Hub" <${process.env.MAIL_USER}>`,
+    from: `"Mosaic Biz Hub System Notification" <${process.env.MAIL_USER}>`,
     to: adminEmail,
-    subject: "New Vendor Verification Pending",
+    subject: `New Vendor Application Submitted – Review Required (Application #${applicationId})`,
     html: `
       <div style="font-family: Arial, sans-serif; background:#f9f9f9; padding:20px;">
-        <h2 style="color:#333;">New Vendor Application Submitted</h2>
-
-        <p><strong>Application ID:</strong> ${applicationId}</p>
-        <p><strong>Business Name:</strong> ${businessName}</p>
-        <p><strong>Vendor Name:</strong> ${vendorName}</p>
+        <h2 style="color:#333;">Dear Admin,</h2>
 
         <p>
-          A new vendor has submitted their Stage-1 onboarding details and is
-          awaiting verification.
+          A new vendor application has been successfully submitted on <strong>Mosaic Biz Hub</strong> and is awaiting your review.
         </p>
 
-        <a href="https://app.mosaicbizhub.com/m/vendor-onboarding/${applicationId}"
+        <p><strong>Application Details:</strong></p>
+        <ul>
+          <li><strong>Application Number:</strong> ${applicationId}</li>
+          <li><strong>Business Name:</strong> ${businessName}</li>
+          <li><strong>Submission Date:</strong> ${submissionDate}</li>
+        </ul>
+
+        <p>
+          Please log in to the Admin Dashboard to review the submitted application and proceed with the verification process.
+        </p>
+
+        <a href="https://app.mosaicbizhub.com/admin/vendor-applications/${applicationId}"
            style="display:inline-block;margin-top:16px;padding:10px 16px;
            background:#0d6efd;color:#fff;text-decoration:none;border-radius:4px;">
-           Review Application
+           Access Admin Dashboard
         </a>
 
         <p style="margin-top:30px;font-size:12px;color:#777;">
-          Mosaic Biz Hub – Admin Notification
+          Best regards,<br/>
+          Mosaic Biz Hub System Notification
         </p>
       </div>
     `,
@@ -201,3 +214,189 @@ exports.sendVendorRejectionEmail = async ({
 };
 
 
+exports.sendAdminVendorProfileCompletedEmail = async ({
+  adminEmail,
+  applicationId,
+  businessName,
+}) => {
+  const safeAdminEmail = adminEmail || process.env.ADMIN_EMAIL;
+  if (!safeAdminEmail) {
+    throw new Error("ADMIN_EMAIL is not configured");
+  }
+
+  const safeApplicationId = applicationId || "N/A";
+  const safeBusinessName = businessName || "N/A";
+  const dashboardLink = `https://app.mosaicbizhub.com/admin/vendor-applications/${applicationId}`;
+
+  const mailOptions = {
+    from: `"Mosaic Biz Hub System Notification" <${process.env.MAIL_USER}>`,
+    to: safeAdminEmail,
+    subject:
+      "Vendor Profile Completed - Documentation Ready for Trust Badge Verification",
+    html: `
+      <div style="font-family: Arial, sans-serif; background:#f9f9f9; padding:20px;">
+        <h2 style="color:#333;">Dear Admin,</h2>
+
+        <p>
+          A vendor has completed their profile and documentation submission on <strong>Mosaic Biz Hub</strong>
+          and is now ready for the Trust Badge verification process.
+        </p>
+
+        <p>
+          The vendor has provided additional documentation and information required to validate their business credentials.
+        </p>
+
+        <p><strong>Vendor Details:</strong></p>
+        <ul>
+          <li><strong>Application Number:</strong> ${safeApplicationId}</li>
+          <li><strong>Business Name:</strong> ${safeBusinessName}</li>
+        </ul>
+
+        <p>
+          Please log in to the Admin Dashboard to review the submitted materials and complete the verification process.
+          Once verified, the appropriate Trust Badge level can be assigned to the vendor.
+        </p>
+
+        <p><strong>Review Submission:</strong></p>
+        <a href="${dashboardLink}"
+           style="display:inline-block;margin-top:10px;padding:10px 16px;
+           background:#0d6efd;color:#fff;text-decoration:none;border-radius:4px;">
+           Admin Dashboard Link
+        </a>
+
+        <p style="margin-top:20px;">
+          Maintaining timely verification helps ensure the integrity and reliability of the Mosaic Biz Hub marketplace.
+        </p>
+
+        <p style="margin-top:30px;font-size:12px;color:#777;">
+          Best regards,<br/>
+          Mosaic Biz Hub System Notification
+        </p>
+      </div>
+    `,
+  };
+
+  await transporter.sendMail(mailOptions);
+};
+
+
+exports.sendVendorTrustBadgeAssignedEmail = async ({
+  to,
+  vendorName,
+  badgeName,
+}) => {
+  const dashboardLink = "https://app.mosaicbizhub.com/login?type=vendor";
+
+  const mailOptions = {
+    from: `"Mosaic Biz Hub" <${process.env.MAIL_USER}>`,
+    to,
+    subject: "Your Trust Badge Has Been Verified and Activated",
+    html: `
+      <div style="font-family: Arial, sans-serif; background:#f9f9f9; padding:20px;">
+        <h2 style="color:#333;">Dear ${vendorName},</h2>
+
+        <p>
+          We are pleased to inform you that your submitted documentation has been successfully verified.
+        </p>
+
+        <p>
+          Your Trust Badge verification process is now complete, and your account has been upgraded to the 
+          <strong>“${badgeName} Trust Badge.”</strong>
+        </p>
+
+        <p>
+          This badge will reflect on your vendor profile immediately, helping buyers identify your business
+          as a verified and trusted member of the Mosaic Biz Hub marketplace.
+        </p>
+
+        <p>
+          Your badge enhances your credibility and visibility within our ecosystem, allowing customers
+          to engage with your business with greater confidence.
+        </p>
+
+        <p>You can view the update by logging into your vendor dashboard.</p>
+
+        <a href="${dashboardLink}"
+           style="display:inline-block;margin-top:16px;padding:12px 20px;
+           background:#0d6efd;color:#fff;text-decoration:none;border-radius:4px;">
+           Access Your Vendor Account
+        </a>
+
+        <p style="margin-top:30px;font-size:12px;color:#777;">
+          Thank you for being a valued part of the Mosaic Biz Hub community.
+        </p>
+
+        <p style="margin-top:20px;font-size:12px;color:#777;">
+          Best regards,<br/>
+          Mosaic Biz Hub Team
+        </p>
+      </div>
+    `,
+  };
+
+  await transporter.sendMail(mailOptions);
+};
+
+
+exports.sendAdminVendorCategoryRequestEmail = async ({
+  adminEmail,
+  requestId,
+  businessName,
+  requestedCategory,
+}) => {
+  const safeAdminEmail = adminEmail || process.env.ADMIN_EMAIL;
+  if (!safeAdminEmail) {
+    throw new Error("ADMIN_EMAIL is not configured");
+  }
+
+  const safeRequestId = requestId || "N/A";
+  // const safeBusinessName = businessName || "N/A";
+  const safeRequestedCategory = requestedCategory || "N/A";
+
+  const dashboardLink = `https://app.mosaicbizhub.com/admin/category-requests`;
+
+  const mailOptions = {
+    from: `"Mosaic Biz Hub System Notification" <${process.env.MAIL_USER}>`,
+    to: safeAdminEmail,
+    subject: "New Vendor Category Request Submitted",
+    html: `
+      <div style="font-family: Arial, sans-serif; background:#f9f9f9; padding:20px;">
+        <h2 style="color:#333;">Dear Admin,</h2>
+
+        <p>
+          A vendor has submitted a new category request on <strong>Mosaic Biz Hub</strong>.
+          The request requires your review and approval before the category can be added to the platform.
+        </p>
+
+        <p><strong>Vendor Request Details:</strong></p>
+        <ul>
+          <li><strong>Request ID:</strong> ${safeRequestId}</li>
+          <li><strong>Business Name:</strong> ${safeBusinessName}</li>
+          <li><strong>Requested Category:</strong> ${safeRequestedCategory}</li>
+        </ul>
+
+        <p>
+          Please log in to the Admin Dashboard to review the request and take appropriate action.
+        </p>
+
+        <p><strong>Review Request:</strong></p>
+        <a href="${dashboardLink}"
+           style="display:inline-block;margin-top:10px;padding:10px 16px;
+           background:#0d6efd;color:#fff;text-decoration:none;border-radius:4px;">
+           Admin Dashboard Link
+        </a>
+
+        <p style="margin-top:20px;">
+          Timely review ensures the platform remains organized and vendors can offer their products or services efficiently.
+        </p>
+
+        <p style="margin-top:30px;font-size:12px;color:#777;">
+          Best regards,<br/>
+          Mosaic Biz Hub System Notification
+        </p>
+      </div>
+    `,
+  };
+
+  await transporter.sendMail(mailOptions);
+};

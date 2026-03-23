@@ -1,6 +1,10 @@
 const VendorOnboarding = require("../models/VendorOnboardingStage1");
 const User = require("../models/User");
-const { sendAdminOnboardingSubmissionEmail, sendVendorSubmissionConfirmationEmail } = require("../utils/WellcomeMailer");
+const {
+  sendAdminOnboardingSubmissionEmail,
+  sendVendorSubmissionConfirmationEmail,
+  sendAdminVendorProfileCompletedEmail,
+} = require("../utils/WellcomeMailer");
 
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
@@ -96,6 +100,17 @@ const validateStage1Payload = (body) => {
   // }
 
   return errors;
+};
+
+const isNonEmptyString = (value) =>
+  typeof value === "string" && value.trim().length > 0;
+
+const isVendorProfileReadyForTrustBadgeVerification = (onboarding) => {
+  const hasLogo = isNonEmptyString(onboarding?.businessProfileImage?.url);
+  const hasBio = isNonEmptyString(onboarding?.businessBio);
+  const hasRefundPolicyDoc = isNonEmptyString(onboarding?.refundPolicyDocument?.url);
+  const hasTermsDoc = isNonEmptyString(onboarding?.termsDocument?.url);
+  return hasLogo && hasBio && hasRefundPolicyDoc && hasTermsDoc;
 };
 
 /* =====================================================
@@ -525,6 +540,9 @@ exports.updateBusinessProfile = async (req, res) => {
         onboarding[key] = payload[key];
       }
     });
+
+    const readyForTrustBadgeVerification =
+      isVendorProfileReadyForTrustBadgeVerification(onboarding);
     await onboarding.save();
 
     // ========== SIMPLE BUSINESS SYNC ==========
@@ -606,6 +624,22 @@ exports.updateBusinessProfile = async (req, res) => {
 
     } catch (businessError) {
       console.log('⚠️ Business sync issue:', businessError.message);
+    }
+
+    // Non-blocking: notify admin once when vendor completes profile + docs
+    if (readyForTrustBadgeVerification && !onboarding.profileCompletionNotifiedAt) {
+      try {
+        await sendAdminVendorProfileCompletedEmail({
+          adminEmail: process.env.ADMIN_EMAIL,
+          applicationId: onboarding.applicationId,
+          businessName: onboarding.businessName,
+        });
+
+        onboarding.profileCompletionNotifiedAt = new Date();
+        await onboarding.save();
+      } catch (emailError) {
+        console.error("Vendor profile completion admin email failed:", emailError);
+      }
     }
 
     return res.status(200).json({
@@ -840,9 +874,8 @@ exports.createVerificationPayment = async (req, res) => {
   try {
     const userId = req.user._id;
 
-    // Find onboarding record
     const onboarding = await VendorOnboarding.findOne({ userId });
-    
+
     if (!onboarding) {
       return res.status(404).json({
         success: false,
@@ -850,7 +883,7 @@ exports.createVerificationPayment = async (req, res) => {
       });
     }
 
-    // Check if already paid
+    // Already paid check
     if (onboarding.verificationPayment?.status === "paid") {
       return res.status(400).json({
         success: false,
@@ -858,9 +891,9 @@ exports.createVerificationPayment = async (req, res) => {
       });
     }
 
-    // Create Stripe Payment Intent - $24.99 = 2499 cents
+    // ✅ Create PaymentIntent (still created for future real flow)
     const paymentIntent = await stripe.paymentIntents.create({
-      amount: 2499, // ✅ $24.99 in cents (Stripe expects cents)
+      amount: 2499,
       currency: 'usd',
       metadata: {
         userId: userId.toString(),
@@ -870,29 +903,32 @@ exports.createVerificationPayment = async (req, res) => {
       description: 'Vendor Onboarding Verification Fee - $24.99'
     });
 
-    // Update onboarding record with payment intent - CONSISTENT amount
+    // ✅ AUTO MARK AS PAID (TEMP LOGIC)
     onboarding.verificationPayment = {
       provider: 'stripe',
       paymentIntentId: paymentIntent.id,
-      amount: 24.99, // ✅ Store in dollars for readability in DB
-      amount_cents: 2499, // ✅ Optional: store both for clarity
+      amount: 24.99,
+      amount_cents: 2499,
       currency: 'usd',
-      status: 'paid', // Auto-mark as paid for testing
+      status: 'paid',
       paidAt: new Date()
     };
-    onboarding.status = 'draft';
+
+    // ✅ IMPORTANT CHANGE
+    onboarding.status = 'submitted';   // 🔥 was "draft"
+    onboarding.submittedAt = new Date();
 
     await onboarding.save();
 
     return res.status(200).json({
       success: true,
-      message: "Payment intent created and auto-paid for testing",
+      message: "Payment successful and application submitted",
       data: {
         clientSecret: paymentIntent.client_secret,
-        amount: 24.99, // ✅ Send dollars to frontend for display
-        amount_cents: 2499, // ✅ Optional: send cents if frontend needs it
+        amount: 24.99,
         currency: 'usd',
-        status: 'paid'
+        status: 'paid',
+        applicationStatus: 'submitted'
       }
     });
 
@@ -904,6 +940,75 @@ exports.createVerificationPayment = async (req, res) => {
     });
   }
 };
+
+// exports.createVerificationPayment = async (req, res) => {
+//   try {
+//     const userId = req.user._id;
+
+//     // Find onboarding record
+//     const onboarding = await VendorOnboarding.findOne({ userId });
+    
+//     if (!onboarding) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "Please save your onboarding draft first"
+//       });
+//     }
+
+//     // Check if already paid
+//     if (onboarding.verificationPayment?.status === "paid") {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Verification fee already paid"
+//       });
+//     }
+
+//     // Create Stripe Payment Intent - $24.99 = 2499 cents
+//     const paymentIntent = await stripe.paymentIntents.create({
+//       amount: 2499, // ✅ $24.99 in cents (Stripe expects cents)
+//       currency: 'usd',
+//       metadata: {
+//         userId: userId.toString(),
+//         type: 'vendor_verification',
+//         applicationId: onboarding.applicationId || 'N/A'
+//       },
+//       description: 'Vendor Onboarding Verification Fee - $24.99'
+//     });
+
+//     // Update onboarding record with payment intent - CONSISTENT amount
+//     onboarding.verificationPayment = {
+//       provider: 'stripe',
+//       paymentIntentId: paymentIntent.id,
+//       amount: 24.99, // ✅ Store in dollars for readability in DB
+//       amount_cents: 2499, // ✅ Optional: store both for clarity
+//       currency: 'usd',
+//       status: 'paid', // Auto-mark as paid for testing
+//       paidAt: new Date()
+//     };
+//     onboarding.status = 'draft';
+
+//     await onboarding.save();
+
+//     return res.status(200).json({
+//       success: true,
+//       message: "Payment intent created and auto-paid for testing",
+//       data: {
+//         clientSecret: paymentIntent.client_secret,
+//         amount: 24.99, // ✅ Send dollars to frontend for display
+//         amount_cents: 2499, // ✅ Optional: send cents if frontend needs it
+//         currency: 'usd',
+//         status: 'paid'
+//       }
+//     });
+
+//   } catch (error) {
+//     console.error("Payment creation error:", error);
+//     return res.status(500).json({
+//       success: false,
+//       message: "Failed to create payment"
+//     });
+//   }
+// };
 
 
 
@@ -1043,9 +1148,6 @@ exports.getPaymentStatus = async (req, res) => {
    SUBMIT FOR REVIEW (STRICT VALIDATION)
 ===================================================== */
 
-
-
-
 exports.submitForReview = async (req, res) => {
   try {
     const userId = req.user._id;
@@ -1065,15 +1167,25 @@ exports.submitForReview = async (req, res) => {
     /* ------------------------------
        STATUS LOCK CHECK
     ------------------------------ */
-    if (
-      onboarding.status !== "draft" &&
-      onboarding.status !== "payment_pending"
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Onboarding already submitted or locked",
-      });
-    }
+// ✅ If already submitted → return success (no error)
+if (onboarding.status === "submitted") {
+  return res.status(200).json({
+    success: true,
+    message: "Application submitted successfully",
+    applicationId: onboarding.applicationId,
+  });
+}
+
+// ❌ Only block invalid states
+if (
+  onboarding.status !== "draft" &&
+  onboarding.status !== "payment_pending"
+) {
+  return res.status(400).json({
+    success: false,
+    message: "Onboarding cannot be submitted at this stage",
+  });
+}
 
     /* ------------------------------
        PAYMENT VALIDATION (MANDATORY)
@@ -1150,8 +1262,122 @@ exports.submitForReview = async (req, res) => {
   }
 };
 
+//old working submit for review without payment and validation checks
+
+// exports.submitForReview = async (req, res) => {
+//   try {
+//     const userId = req.user._id;
+
+//     const onboarding = await VendorOnboarding.findOne({ userId });
+
+//     /* ------------------------------
+//        BASIC EXISTENCE CHECK
+//     ------------------------------ */
+//     if (!onboarding) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "save Draft before submitting for review",
+//       });
+//     }
+
+//     /* ------------------------------
+//        STATUS LOCK CHECK
+//     ------------------------------ */
+//     if (
+//       onboarding.status !== "draft" &&
+//       onboarding.status !== "payment_pending"
+//     ) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Onboarding already submitted or locked",
+//       });
+//     }
+
+//     /* ------------------------------
+//        PAYMENT VALIDATION (MANDATORY)
+//     ------------------------------ */
+//     // if (
+//     //   !onboarding.verificationPayment ||
+//     //   onboarding.verificationPayment.status !== "paid"
+//     // ) {
+//     //   return res.status(402).json({
+//     //     success: false,
+//     //     message: "Verification payment must be completed before submission",
+//     //   });
+//     // }
+
+//     /* ------------------------------
+//        FORM VALIDATION (STRICT)
+//     ------------------------------ */
+//     const validationErrors = validateStage1Payload(onboarding.toObject());
+
+//     if (validationErrors.length > 0) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Validation failed",
+//         errors: validationErrors,
+//       });
+//     }
+
+//     /* ------------------------------
+//        FINAL SUBMISSION
+//     ------------------------------ */
+//     onboarding.status = "submitted";
+//     onboarding.submittedAt = new Date();
+//     await onboarding.save();
+
+//     /* ------------------------------
+//        FETCH USER DETAILS
+//     ------------------------------ */
+//     const user = await User.findById(userId).select("name email");
+
+//     /* ------------------------------
+//        EMAIL NOTIFICATIONS (NON-BLOCKING)
+//     ------------------------------ */
+//     try {
+//       // 1️⃣ Notify Admin
+//       await sendAdminOnboardingSubmissionEmail({
+//         adminEmail: process.env.ADMIN_EMAIL, // e.g. admin@mosaicbizhub.com
+//         applicationId: onboarding.applicationId,
+//         businessName: onboarding.businessName,
+//         vendorName: user.name,
+//       });
+
+//       // 2️⃣ Notify Vendor
+//       await sendVendorSubmissionConfirmationEmail({
+//         to: user.email,
+//         vendorName: user.name,
+//         applicationId: onboarding.applicationId,
+//       });
+//     } catch (emailError) {
+//       // Emails should NEVER block submission
+//       console.error("Stage-1 email notification failed:", emailError);
+//     }
+
+//     return res.status(200).json({
+//       success: true,
+//       message: "Stage 1 submitted successfully for admin verification",
+//       applicationId: onboarding.applicationId,
+//     });
+//   } catch (error) {
+//     console.error("Stage-1 submit error:", error);
+//     return res.status(500).json({
+//       success: false,
+//       message: "Stage 1 submission failed",
+//     });
+//   }
+// };
+
+
+
+
+
+
+
 
 // Direct update payment status to paid (for testing)
+
+
 exports.markPaymentAsPaid = async (req, res) => {
   try {
     const userId = req.user._id;

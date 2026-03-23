@@ -161,6 +161,10 @@ const VendorOnboardingStage1Schema = new mongoose.Schema(
       index: true,
     },
 
+    submittedAt: Date,
+
+    profileCompletionNotifiedAt: Date,
+
     totalVerificationPoints: {
       type: Number,
       default: 0,

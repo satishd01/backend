@@ -75,9 +75,9 @@ exports.createProductWithVariants = async (req, res) => {
     } = req.body;
 
     // Validate variants
-    if (!Array.isArray(variants) || variants.length === 0) {
-      return res.status(400).json({ error: 'At least one product variant is required.' });
-    }
+    // if (!Array.isArray(variants) || variants.length === 0) {
+    //   return res.status(400).json({ error: 'At least one product variant is required.' });
+    // }
 
     // Check business ownership
     const business = await Business.findOne({ _id: businessId, owner: userId });

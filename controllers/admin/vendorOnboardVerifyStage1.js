@@ -3,7 +3,8 @@ const User = require('../../models/User');
 const Business = require('../../models/Business');
 const { 
   sendVendorApprovedEmail,
-  sendVendorRejectionEmail
+  sendVendorRejectionEmail,
+  sendVendorTrustBadgeAssignedEmail
 } = require('../../utils/WellcomeMailer');
 
 /* =====================================================
@@ -363,8 +364,7 @@ exports.verifyAndAllocatePoints = async (req, res) => {
 exports.finalizeVerification = async (req, res) => {
   try {
     const { applicationId } = req.params;
-    
-    // ✅ FIX: Search by applicationId field instead of _id
+
     const application = await VendorOnboarding.findOne({ applicationId })
       .populate('userId', 'name email');
 
@@ -377,28 +377,37 @@ exports.finalizeVerification = async (req, res) => {
 
     const totalPoints = application.totalVerificationPoints;
     const previousStatus = application.status;
-    let badge = null;
+    const previousBadge = application.badge;
 
+    // Determine badge based on points
+    let badge = null;
     if (totalPoints >= 80) badge = 'Diamond';
     else if (totalPoints >= 50) badge = 'Platinum';
     else if (totalPoints >= 40) badge = 'Gold';
     else if (totalPoints >= 30) badge = 'Silver';
-    
+
+    // Update status and badge
     if (totalPoints >= 30) {
-      // SCENARIO 1: Approved (30+ points)
       application.status = 'verified';
       application.badge = badge;
-      application.totalVerificationPoints = totalPoints;
-      await application.save();
+    } else {
+      application.status = 'rejected';
+      application.badge = badge; // could be null
+    }
 
-      // Keep Business points/badge in sync on finalize
-      await Business.findOneAndUpdate(
-        { owner: application.userId._id },
-        { $set: { points: totalPoints, badge } }
-      );
-      
-      // Send approval email only on status transition
-      let emailSent = false;
+    await application.save();
+
+    // Keep Business record in sync
+    await Business.findOneAndUpdate(
+      { owner: application.userId._id },
+      { $set: { points: totalPoints, badge } }
+    );
+
+    let emailSent = false;
+
+    // SCENARIO: Vendor approved or status changed to verified
+    if (application.status === 'verified') {
+      // Send approval email if status changed
       if (previousStatus !== 'verified') {
         await sendVendorApprovedEmail({
           to: application.userId.email,
@@ -407,28 +416,26 @@ exports.finalizeVerification = async (req, res) => {
         });
         emailSent = true;
       }
-      
+
+      // Send Trust Badge email if badge changed or first-time assigned
+      if (badge && badge !== previousBadge) {
+        await sendVendorTrustBadgeAssignedEmail({
+          to: application.userId.email,
+          vendorName: application.userId.name,
+          badgeName: badge
+        });
+        emailSent = true;
+      }
+
       return res.status(200).json({
         success: true,
         message: 'Application approved successfully',
         data: { status: 'approved', points: totalPoints, badge, emailSent }
       });
-      
-    } else {
-      // SCENARIO 2: Rejected (<30 points)
-      application.status = 'rejected';
-      application.badge = badge;
-      application.totalVerificationPoints = totalPoints;
-      await application.save();
+    }
 
-      // Keep Business points/badge in sync on finalize
-      await Business.findOneAndUpdate(
-        { owner: application.userId._id },
-        { $set: { points: totalPoints, badge } }
-      );
-      
-      // Send rejection email only on status transition
-      let emailSent = false;
+    // SCENARIO: Vendor rejected (<30 points)
+    if (application.status === 'rejected') {
       if (previousStatus !== 'rejected') {
         await sendVendorRejectionEmail({
           to: application.userId.email,
@@ -438,7 +445,7 @@ exports.finalizeVerification = async (req, res) => {
         });
         emailSent = true;
       }
-      
+
       return res.status(200).json({
         success: true,
         message: 'Application rejected due to insufficient points',
@@ -454,3 +461,108 @@ exports.finalizeVerification = async (req, res) => {
     });
   }
 };
+
+// exports.finalizeVerification = async (req, res) => {
+//   try {
+//     const { applicationId } = req.params;
+    
+//     // ✅ FIX: Search by applicationId field instead of _id
+//     const application = await VendorOnboarding.findOne({ applicationId })
+//       .populate('userId', 'name email');
+
+//     if (!application) {
+//       return res.status(404).json({
+//         success: false,
+//         message: 'Application not found'
+//       });
+//     }
+
+//     const totalPoints = application.totalVerificationPoints;
+//     const previousStatus = application.status;
+//     let badge = null;
+
+//     if (totalPoints >= 80) badge = 'Diamond';
+//     else if (totalPoints >= 50) badge = 'Platinum';
+//     else if (totalPoints >= 40) badge = 'Gold';
+//     else if (totalPoints >= 30) badge = 'Silver';
+    
+//     if (totalPoints >= 30) {
+//       // SCENARIO 1: Approved (30+ points)
+//       application.status = 'verified';
+//       application.badge = badge;
+//       application.totalVerificationPoints = totalPoints;
+//       await application.save();
+
+//       // Keep Business points/badge in sync on finalize
+//       await Business.findOneAndUpdate(
+//         { owner: application.userId._id },
+//         { $set: { points: totalPoints, badge } }
+//       );
+      
+//       // Send approval email only on status transition
+//       let emailSent = false;
+// if (previousStatus !== 'verified') {
+
+//   // Approval email
+//   await sendVendorApprovedEmail({
+//     to: application.userId.email,
+//     vendorName: application.userId.name,
+//     applicationId: application.applicationId
+//   });
+
+//   // Trust badge email
+//   await sendVendorTrustBadgeAssignedEmail({
+//     to: application.userId.email,
+//     vendorName: application.userId.name,
+//     badgeName: badge
+//   });
+
+//   emailSent = true;
+// }
+      
+//       return res.status(200).json({
+//         success: true,
+//         message: 'Application approved successfully',
+//         data: { status: 'approved', points: totalPoints, badge, emailSent }
+//       });
+      
+//     } else {
+//       // SCENARIO 2: Rejected (<30 points)
+//       application.status = 'rejected';
+//       application.badge = badge;
+//       application.totalVerificationPoints = totalPoints;
+//       await application.save();
+
+//       // Keep Business points/badge in sync on finalize
+//       await Business.findOneAndUpdate(
+//         { owner: application.userId._id },
+//         { $set: { points: totalPoints, badge } }
+//       );
+      
+//       // Send rejection email only on status transition
+//       let emailSent = false;
+//       if (previousStatus !== 'rejected') {
+//         await sendVendorRejectionEmail({
+//           to: application.userId.email,
+//           vendorName: application.userId.name,
+//           applicationId: application.applicationId,
+//           points: totalPoints
+//         });
+//         emailSent = true;
+//       }
+      
+//       return res.status(200).json({
+//         success: true,
+//         message: 'Application rejected due to insufficient points',
+//         data: { status: 'rejected', points: totalPoints, badge, emailSent }
+//       });
+//     }
+
+//   } catch (error) {
+//     console.error('Finalize verification error:', error);
+//     return res.status(500).json({
+//       success: false,
+//       message: 'Failed to finalize verification'
+//     });
+//   }
+// };

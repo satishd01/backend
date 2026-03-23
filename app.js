@@ -33,6 +33,7 @@ const blogRoutes = require('./routes/admin/Blog/blogRoutes');
 const productCategoryRoutes = require('./routes/admin/productCategoryRoutes')
 const productSubcategoryRoutes = require('./routes/admin/productSubcategoryRoutes')
 const ServiceCategoryRoutes = require('./routes/admin/categoryRoutes')
+const categoryRequestRoutes = require('./routes/admin/categoryRequestRoutes');
 const serviceSubcategoryRoutes = require('./routes/admin/serviceSubcategoryRoutes');
 const foodCategoryRoutes = require('./routes/admin/foodCategoryRoutes')
 const foodSubcategoryRoutes = require('./routes/admin/foodSubcategoryRoutes');
@@ -45,7 +46,9 @@ const vendorOnboardVerifyStage1Routes= require("./routes/vendorOnboarding.routes
 const wishlistRoutes = require('./routes/customer/wishlistRoutes');
 const cartRoutes = require('./routes/customer/cartRoutes');
 
+//discount route
 
+const discountRoutes = require('./routes/discounts');
 
 // Service Booking Route
 
@@ -82,16 +85,19 @@ const xss = require('xss-clean');
 
 const app = express();
 
-const allowedOrigins = [
-  'https://app.mosaicbizhub.com',
-  'http://localhost:3000',
-  'http://localhost:8081',
-  'https://app.minorityownedbusiness.info',
-  "http://192.168.1.50:3000",
-  "exp://192.168.0.104:8081",
-  "exp://192.168.0.104:3000",
-  "exp://192.168.0.104:3001"
-];
+const allowedOrigins = Array.from(
+  new Set([
+    'https://app.mosaicbizhub.com',
+    'http://localhost:3000',
+    'http://localhost:8081',
+    'https://app.minorityownedbusiness.info',
+    'http://192.168.1.50:3000',
+    'exp://192.168.0.104:8081',
+    'exp://192.168.0.104:3000',
+    'exp://192.168.0.104:3001',
+    process.env.FRONTEND_URL,
+  ].filter(Boolean))
+);
 app.set('trust proxy', 1);
 app.use(cors({
   origin: function (origin, callback) {
@@ -164,6 +170,7 @@ app.use('/api/business-profile', businessProfileRoutes);
 app.use('/api/admin/category/product', productCategoryRoutes);
 app.use('/api/admin/category/product-subcategory', productSubcategoryRoutes);
 app.use('/api/admin/category/service', ServiceCategoryRoutes);
+app.use('/api/admin/category-requests', categoryRequestRoutes);
 app.use('/api/admin/category/service-subcategory', serviceSubcategoryRoutes);
 app.use('/api/admin/category/food', foodCategoryRoutes);
 app.use('/api/admin/category/food-subcategory', foodSubcategoryRoutes);
@@ -173,7 +180,9 @@ app.use('/admin/business-profile-verify', businessProfileVerifyRoutes);
 
 
 
+// disount routes 
 
+app.use('/api/discounts', discountRoutes);
 
 
 // User Routes
