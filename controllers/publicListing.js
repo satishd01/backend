@@ -285,7 +285,7 @@ exports.getServiceById = async (req, res) => {
     const vendorInfo = await VendorOnboardingStage1.findOne({
       businessId: service.businessId?._id,
     })
-      .select('website address')
+      .select('website address refundPolicyDocument termsDocument googleReviewLink')
       .lean();
 
     const business = service.businessId?.toObject
@@ -299,6 +299,9 @@ exports.getServiceById = async (req, res) => {
     if (business) {
       business.address = resolvedAddress;
       business.website = resolvedWebsite;
+      business.refundPolicyDocument = vendorInfo?.refundPolicyDocument || null;
+      business.termsDocument = vendorInfo?.termsDocument || null;
+      business.googleReviewLink = vendorInfo?.googleReviewLink || null;
       business.socialLinks = {
         ...(business.socialLinks || {}),
         website: resolvedWebsite,
@@ -557,7 +560,7 @@ exports.getFoodById = async (req, res) => {
     const vendorInfo = await VendorOnboardingStage1.findOne({
       businessId: food.businessId?._id,
     })
-      .select('website address')
+      .select('website address refundPolicyDocument termsDocument googleReviewLink')
       .lean();
 
     const business = food.businessId?.toObject
@@ -571,6 +574,9 @@ exports.getFoodById = async (req, res) => {
     if (business) {
       business.address = resolvedAddress;
       business.website = resolvedWebsite;
+      business.refundPolicyDocument = vendorInfo?.refundPolicyDocument || null;
+      business.termsDocument = vendorInfo?.termsDocument || null;
+      business.googleReviewLink = vendorInfo?.googleReviewLink || null;
       business.socialLinks = {
         ...(business.socialLinks || {}),
         website: resolvedWebsite,
@@ -1401,7 +1407,7 @@ exports.getVendorProfile = async (req, res) => {
     const vendorOnboarding = await VendorOnboardingStage1.findOne({
       businessId
     })
-    .select('primaryContactName primaryContactDesignation businessBio website facebook instagram linkedin tiktok twitter businessEmail businessPhone alternatePhone address yearsInBusiness ownershipType employeesCount minorityCategories googleReviewLink communityServiceLink')
+    .select('primaryContactName primaryContactDesignation businessBio website facebook instagram linkedin tiktok twitter businessEmail businessPhone alternatePhone address yearsInBusiness ownershipType employeesCount minorityCategories googleReviewLink communityServiceLink refundPolicyDocument termsDocument')
     .lean();
 
     res.json({

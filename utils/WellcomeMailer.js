@@ -178,40 +178,195 @@ exports.sendVendorApprovedEmail = async ({
 };
 
 
+
 exports.sendVendorRejectionEmail = async ({
   to,
   vendorName,
   applicationId,
-  points
+  rejectionReason
 }) => {
+  const safeRejectionReason =
+    rejectionReason || 'Some required documents are not verified.';
+
   const mailOptions = {
     from: `"Mosaic Biz Hub" <${process.env.MAIL_USER}>`,
     to,
-    subject: "Vendor Application Update Required",
+    subject: "Action Required: Vendor Application Update",
     html: `
-      <div style="font-family: Arial, sans-serif; background:#f9f9f9; padding:20px;">
-        <h2 style="color:#333;">Hello ${vendorName},</h2>
-        
-        <p>Thank you for your interest in joining Mosaic Biz Hub.</p>
-        
-        <p>After reviewing your application, we currently need additional information to complete your onboarding process. 
-        Your application received <strong>${points} points</strong> out of the required 30 points.</p>
-        
-        <p><strong>Application ID:</strong> ${applicationId}</p>
-        
-        <p>One of our community growth representatives will be in touch within 2-3 business days to help you complete the verification process.</p>
-        
-        <p>Thank you for your patience.</p>
-        
-        <p style="margin-top:30px;font-size:12px;color:#777;">
-          Best regards,<br>Mosaic Biz Hub Team
-        </p>
+      <div style="font-family: Arial, sans-serif; background:#f4f6f8; padding:30px;">
+        <div style="max-width:600px; margin:0 auto; background:#ffffff; border-radius:8px; padding:30px; box-shadow:0 2px 8px rgba(0,0,0,0.05);">
+          
+          <h2 style="color:#2c3e50;">Hello ${vendorName},</h2>
+          
+          <p style="color:#555; line-height:1.6;">
+            Thank you for applying to <strong>Mosaic Biz Hub</strong>.
+          </p>
+
+          <p style="color:#555; line-height:1.6;">
+            Your application could not be approved because the following required document(s) are not verified:
+          </p>
+
+          <div style="background:#fff3f3; border:1px solid #f5c6cb; padding:15px; border-radius:6px; margin:20px 0;">
+            <p style="margin:0; color:#a94442;">
+              <strong>Unverified Documents:</strong><br/>
+              ${safeRejectionReason}
+            </p>
+          </div>
+
+          <p style="color:#555; line-height:1.6;">
+            Please update the required documents to continue your verification process.
+          </p>
+
+          <div style="margin:25px 0; text-align:center;">
+            <a 
+              href="https://app.mosaicbizhub.com/partners/business/new"
+              style="background:#c79b44; color:#fff; padding:12px 18px; text-decoration:none; border-radius:6px; font-size:14px; font-weight:bold;"
+            >
+              Update Documents
+            </a>
+          </div>
+
+          <p style="color:#555; line-height:1.6;">
+            Once updated, our team will review your application again.
+          </p>
+
+          <hr style="border:none; border-top:1px solid #eee; margin:30px 0;" />
+
+          <p style="font-size:13px; color:#888;">
+            If you need help, feel free to reply to this email.
+          </p>
+
+          <p style="font-size:13px; color:#888;">
+            Best regards,<br/>
+            <strong>Mosaic Biz Hub Team</strong>
+          </p>
+        </div>
       </div>
     `,
   };
 
   await transporter.sendMail(mailOptions);
 };
+
+// exports.sendVendorRejectionEmail = async ({
+//   to,
+//   vendorName,
+//   applicationId,
+//   points,
+//   rejectionReason
+// }) => {
+//   const safeRejectionReason = rejectionReason || 'Your application did not meet the current verification requirements.';
+
+//   const mailOptions = {
+//     from: `"Mosaic Biz Hub" <${process.env.MAIL_USER}>`,
+//     to,
+//     subject: "Action Required: Vendor Application Update",
+//     html: `
+//       <div style="font-family: Arial, sans-serif; background:#f4f6f8; padding:30px;">
+//         <div style="max-width:600px; margin:0 auto; background:#ffffff; border-radius:8px; padding:30px; box-shadow:0 2px 8px rgba(0,0,0,0.05);">
+          
+//           <h2 style="color:#2c3e50; margin-bottom:10px;">Hello ${vendorName},</h2>
+          
+//           <p style="color:#555; line-height:1.6;">
+//             Thank you for your interest in joining <strong>Mosaic Biz Hub</strong>. We appreciate the time and effort you’ve put into your application.
+//           </p>
+          
+//           <p style="color:#555; line-height:1.6;">
+//             After an initial review, we found that some additional information or clarification is required before we can proceed with your verification.
+//           </p>
+
+//           <div style="background:#fff3f3; border:1px solid #f5c6cb; padding:15px; border-radius:6px; margin:20px 0;">
+//             <p style="margin:0; color:#a94442;">
+//               <strong>Reason for Rejection:</strong><br/>
+//               ${safeRejectionReason}
+//             </p>
+//           </div>
+
+//           <p style="color:#555; line-height:1.6;">
+//             <strong>Application ID:</strong> ${applicationId}<br/>
+//             <strong>Verification Score:</strong> ${points}
+//           </p>
+
+//           <p style="color:#555; line-height:1.6;">
+//             Our team is here to support you. A community growth representative will reach out to you within 
+//             <strong>2–3 business days</strong> to guide you through the next steps and help complete your onboarding.
+//           </p>
+
+//           <p style="color:#555; line-height:1.6;">
+//             In the meantime, you may review your submitted details and prepare any necessary documents to speed up the process.
+//           </p>
+
+//           <p style="color:#555; line-height:1.6;">
+//             We look forward to helping you successfully join our platform.
+//           </p>
+
+//           <hr style="border:none; border-top:1px solid #eee; margin:30px 0;" />
+
+//           <p style="font-size:13px; color:#888;">
+//             If you have any questions, feel free to reply to this email. Our support team will be happy to assist you.
+//           </p>
+
+//           <p style="font-size:13px; color:#888;">
+//             Best regards,<br/>
+//             <strong>Mosaic Biz Hub Team</strong>
+//           </p>
+//         </div>
+//       </div>
+//     `,
+//   };
+
+//   await transporter.sendMail(mailOptions);
+// };
+
+
+
+
+
+
+
+
+
+
+
+
+// exports.sendVendorRejectionEmail = async ({
+//   to,
+//   vendorName,
+//   applicationId,
+//   points,
+//   rejectionReason
+// }) => {
+//   const safeRejectionReason = rejectionReason || 'Your application did not meet the current verification requirements.';
+
+//   const mailOptions = {
+//     from: `"Mosaic Biz Hub" <${process.env.MAIL_USER}>`,
+//     to,
+//     subject: "Vendor Application Update Required",
+//     html: `
+//       <div style="font-family: Arial, sans-serif; background:#f9f9f9; padding:20px;">
+//         <h2 style="color:#333;">Hello ${vendorName},</h2>
+        
+//         <p>Thank you for your interest in joining Mosaic Biz Hub.</p>
+        
+//         <p>After reviewing your application, we currently need additional information to complete your onboarding process. 
+
+//         <p><strong>Reason for rejection:</strong> ${safeRejectionReason}</p>
+        
+//         <p><strong>Application ID:</strong> ${applicationId}</p>
+        
+//         <p>One of our community growth representatives will be in touch within 2-3 business days to help you complete the verification process.</p>
+        
+//         <p>Thank you for your patience.</p>
+        
+//         <p style="margin-top:30px;font-size:12px;color:#777;">
+//           Best regards,<br>Mosaic Biz Hub Team
+//         </p>
+//       </div>
+//     `,
+//   };
+
+//   await transporter.sendMail(mailOptions);
+// };
 
 
 exports.sendAdminVendorProfileCompletedEmail = async ({

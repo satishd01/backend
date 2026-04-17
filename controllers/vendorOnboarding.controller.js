@@ -108,9 +108,7 @@ const isNonEmptyString = (value) =>
 const isVendorProfileReadyForTrustBadgeVerification = (onboarding) => {
   const hasLogo = isNonEmptyString(onboarding?.businessProfileImage?.url);
   const hasBio = isNonEmptyString(onboarding?.businessBio);
-  const hasRefundPolicyDoc = isNonEmptyString(onboarding?.refundPolicyDocument?.url);
-  const hasTermsDoc = isNonEmptyString(onboarding?.termsDocument?.url);
-  return hasLogo && hasBio && hasRefundPolicyDoc && hasTermsDoc;
+  return hasLogo && hasBio;
 };
 
 /* =====================================================
@@ -118,22 +116,21 @@ const isVendorProfileReadyForTrustBadgeVerification = (onboarding) => {
 
    ===================================================== */
 
-// updated save draft to handle new fields and preserve existing data
-
+// updated save draft to handle new fields and preserve existing data it will uodate stustus dubmitted if app. is rejcted by admin
 
 exports.saveDraft = async (req, res) => {
   try {
     const userId = req.user._id;
-    const payload = { ...req.body }; // copy of frontend data
+    const payload = { ...req.body };
 
     // 1️⃣ Check if onboarding exists
     let onboarding = await VendorOnboarding.findOne({ userId });
 
-    // 2️⃣ Lock if already submitted
-    if (onboarding && onboarding.status === "submitted") {
+    // 2️⃣ ❌ Block ONLY if verified (not submitted)
+    if (onboarding && onboarding.status === "verified") {
       return res.status(400).json({
         success: false,
-        message: "Onboarding already submitted and cannot be edited",
+        message: "Application already verified and cannot be edited",
       });
     }
 
@@ -145,47 +142,50 @@ exports.saveDraft = async (req, res) => {
       });
     }
 
-    // 4️⃣ Remove forbidden fields from frontend
+    // 4️⃣ Remove forbidden fields
     const forbiddenFields = ["verificationPayment", "status", "applicationId"];
     forbiddenFields.forEach((field) => delete payload[field]);
 
-    // 5️⃣ Map frontend fields to schema fields
+    // 5️⃣ Map frontend fields
     if (payload.businessOwnershipType !== undefined) {
       payload.ownershipType = payload.businessOwnershipType;
       delete payload.businessOwnershipType;
     }
+
     if (payload.numberOfEmployees !== undefined) {
       payload.employeesCount = payload.numberOfEmployees;
       delete payload.numberOfEmployees;
     }
+
     if (payload.contactPhone !== undefined) {
-      payload.primaryContactPhone = payload.contactPhone; // primary contact
-      payload.primaryPhone = payload.contactPhone;        // also general primaryPhone
+      payload.primaryContactPhone = payload.contactPhone;
+      payload.primaryPhone = payload.contactPhone;
       delete payload.contactPhone;
     }
+
     if (payload.contactEmail !== undefined) {
-      payload.secondaryBusinessEmail = payload.contactEmail; // secondary email
+      payload.secondaryBusinessEmail = payload.contactEmail;
       delete payload.contactEmail;
     }
 
-    // Map social URLs
+    // Social links mapping
     const urlFields = ["websiteUrl", "facebookUrl", "instagramUrl", "linkedinUrl", "tiktokUrl"];
     urlFields.forEach((field) => {
       if (payload[field] !== undefined) {
-        const key = field.replace("Url", ""); // websiteUrl -> website
+        const key = field.replace("Url", "");
         payload[key] = payload[field];
         delete payload[field];
       }
     });
 
-    // 6️⃣ Apply sanitized payload to onboarding
+    // 6️⃣ Apply payload
     Object.keys(payload).forEach((key) => {
       if (payload[key] !== undefined) {
         onboarding[key] = payload[key];
       }
     });
 
-    // 7️⃣ Apply defaults only for missing/null fields
+    // 7️⃣ Default fields
     const defaultFields = {
       firstName: "",
       lastName: "",
@@ -222,26 +222,155 @@ exports.saveDraft = async (req, res) => {
       }
     });
 
-    // 8️⃣ Ensure status is always draft
-    onboarding.status = "draft";
-
-    // 9️⃣ Save document
+    // 8️⃣ Smart status handling
+if (onboarding.status === "rejected") {
+  // 🔥 Auto resubmit when user edits after rejection
+  onboarding.status = "submitted";
+} else if (!onboarding.status) {
+  onboarding.status = "draft";
+}
+    // 8️⃣ Save
     await onboarding.save();
 
     return res.status(200).json({
       success: true,
-      message: "Stage-1 draft saved successfully",
+      message: "saved successfully",
       data: onboarding,
     });
+
   } catch (error) {
     console.error("Save draft error:", error);
     return res.status(500).json({
       success: false,
-      message: "Failed to save onboarding draft",
+      message: "Failed to save data",
       error: error.message,
     });
   }
 };
+
+// exports.saveDraft = async (req, res) => {
+//   try {
+//     const userId = req.user._id;
+//     const payload = { ...req.body }; // copy of frontend data
+
+//     // 1️⃣ Check if onboarding exists
+//     let onboarding = await VendorOnboarding.findOne({ userId });
+
+//     // 2️⃣ Lock if already submitted
+//     if (onboarding && onboarding.status === "submitted") {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Onboarding already submitted",
+//       });
+//     }
+
+//     // 3️⃣ Create new onboarding if it doesn't exist
+//     if (!onboarding) {
+//       onboarding = new VendorOnboarding({
+//         userId,
+//         status: "draft",
+//       });
+//     }
+
+//     // 4️⃣ Remove forbidden fields from frontend
+//     const forbiddenFields = ["verificationPayment", "status", "applicationId"];
+//     forbiddenFields.forEach((field) => delete payload[field]);
+
+//     // 5️⃣ Map frontend fields to schema fields
+//     if (payload.businessOwnershipType !== undefined) {
+//       payload.ownershipType = payload.businessOwnershipType;
+//       delete payload.businessOwnershipType;
+//     }
+//     if (payload.numberOfEmployees !== undefined) {
+//       payload.employeesCount = payload.numberOfEmployees;
+//       delete payload.numberOfEmployees;
+//     }
+//     if (payload.contactPhone !== undefined) {
+//       payload.primaryContactPhone = payload.contactPhone; // primary contact
+//       payload.primaryPhone = payload.contactPhone;        // also general primaryPhone
+//       delete payload.contactPhone;
+//     }
+//     if (payload.contactEmail !== undefined) {
+//       payload.secondaryBusinessEmail = payload.contactEmail; // secondary email
+//       delete payload.contactEmail;
+//     }
+
+//     // Map social URLs
+//     const urlFields = ["websiteUrl", "facebookUrl", "instagramUrl", "linkedinUrl", "tiktokUrl"];
+//     urlFields.forEach((field) => {
+//       if (payload[field] !== undefined) {
+//         const key = field.replace("Url", ""); // websiteUrl -> website
+//         payload[key] = payload[field];
+//         delete payload[field];
+//       }
+//     });
+
+//     // 6️⃣ Apply sanitized payload to onboarding
+//     Object.keys(payload).forEach((key) => {
+//       if (payload[key] !== undefined) {
+//         onboarding[key] = payload[key];
+//       }
+//     });
+
+//     // 7️⃣ Apply defaults only for missing/null fields
+//     const defaultFields = {
+//       firstName: "",
+//       lastName: "",
+//       businessName: "",
+//       primaryEmail: "",
+//       primaryPhone: "",
+//       primaryContactPhone: "",
+//       language: "",
+//       licenseNumber: "",
+//       businessBio: "",
+//       characterLimit: 0,
+//       businessProfileImage: { url: "", verified: false },
+//       businessEmail: "",
+//       businessPhone: "",
+//       alternatePhone: "",
+//       twitter: "",
+//       refundPolicyDocument: { url: "", verified: false },
+//       termsDocument: { url: "", verified: false },
+//       googleReviewLink: "",
+//       communityServiceLink: "",
+//       website: "",
+//       facebook: "",
+//       instagram: "",
+//       linkedin: "",
+//       tiktok: "",
+//       ownershipType: null,
+//       employeesCount: null,
+//       usesThirdPartyBooking: false,
+//     };
+
+//     Object.keys(defaultFields).forEach((key) => {
+//       if (onboarding[key] === undefined || onboarding[key] === null) {
+//         onboarding[key] = defaultFields[key];
+//       }
+//     });
+
+//     // 8️⃣ Ensure status is always draft
+//     onboarding.status = "draft";
+
+//     // 9️⃣ Save document
+//     await onboarding.save();
+
+//     return res.status(200).json({
+//       success: true,
+//       message: "Stage-1 draft saved successfully",
+//       data: onboarding,
+//     });
+//   } catch (error) {
+//     console.error("Save draft error:", error);
+//     return res.status(500).json({
+//       success: false,
+//       message: "Failed to save onboarding draft",
+//       error: error.message,
+//     });
+//   }
+// };
+
+
 
 //    exports.saveDraft = async (req, res) => {
 //   try {
@@ -339,85 +468,6 @@ exports.saveDraft = async (req, res) => {
 //     onboarding.status = "draft"; 
 
 //     // 7️⃣ Save document
-//     await onboarding.save();
-
-//     return res.status(200).json({
-//       success: true,
-//       message: "Stage-1 draft saved successfully",
-//       data: onboarding,
-//     });
-//   } catch (error) {
-//     console.error("Save draft error:", error);
-//     return res.status(500).json({
-//       success: false,
-//       message: "Failed to save onboarding draft",
-//     });
-//   }
-// };
-
-//  exports.saveDraft = async (req, res) => {
-//   try {
-//     const userId = req.user._id;
-//     const payload = req.body;
-
-//     // 1️⃣ Check existing onboarding
-//     let onboarding = await VendorOnboarding.findOne({ userId });
-
-//     // 2️⃣ Lock if already submitted
-//     if (onboarding && onboarding.status === "submitted") {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Onboarding already submitted and cannot be edited",
-//       });
-//     }
-
-//     // 3️⃣ Generate applicationId ONLY once
-//     if (!onboarding) {
-//       onboarding = new VendorOnboarding({
-//         userId,
-//         applicationId: `MBH-APP-${Date.now()}-${Math.random()
-//           .toString(36)
-//           .substring(2, 8)
-//           .toUpperCase()}`,
-//         status: "draft",
-//       });
-//     }
-
-//     // 4️⃣ Map frontend fields to database fields
-//     const mappedPayload = {
-//       ...payload,
-//       // Map URL fields
-//       website: payload.websiteUrl,
-//       facebook: payload.facebookUrl,
-//       instagram: payload.instagramUrl,
-//       linkedin: payload.linkedinUrl,
-//       tiktok: payload.tiktokUrl,
-      
-//       // Map other fields
-//       ownershipType: payload.businessOwnershipType,
-//       employeesCount: payload.numberOfEmployees,
-//       secondaryBusinessEmail: payload.businessEmail,
-//       usesThirdPartyBooking: payload.hasThirdPartyBooking,
-      
-//       // Remove frontend-only fields
-//       websiteUrl: undefined,
-//       facebookUrl: undefined,
-//       instagramUrl: undefined,
-//       linkedinUrl: undefined,
-//       tiktokUrl: undefined,
-//       businessOwnershipType: undefined,
-//       numberOfEmployees: undefined,
-//       businessEmail: undefined,
-//       hasThirdPartyBooking: undefined,
-//       contactEmail: undefined,
-//       contactPhone: undefined
-//     };
-
-//     // Apply mapped fields
-//     Object.assign(onboarding, mappedPayload);
-//     onboarding.status = "draft"; 
-
-//     // 5️⃣ Save document
 //     await onboarding.save();
 
 //     return res.status(200).json({

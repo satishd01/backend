@@ -75,6 +75,7 @@ const featuredProductRoutes = require('./routes/featuredProductRoutes');
 const contactInquiryRoutes = require('./routes/contactInquiryRoutes');
 
 const authRoutes = require('./routes/authRoutes');
+const enquiryRoutes = require('./routes/enquiryRoutes');
 
 
 
@@ -218,6 +219,7 @@ app.use('/api/google-places', googlePlace)
 app.use('/api', featuredProductRoutes);
 app.use('/api/contact-inquiry', contactInquiryRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/enquiries', enquiryRoutes);
 
 
 

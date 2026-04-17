@@ -7,6 +7,38 @@ const {
   sendVendorTrustBadgeAssignedEmail
 } = require('../../utils/WellcomeMailer');
 
+const syncBusinessPoints = async (application, badge) => {
+  const ownerId = application.userId?._id || application.userId;
+  const update = {
+    points: application.totalVerificationPoints,
+  };
+
+  if (badge !== undefined) {
+    update.badge = badge;
+  }
+
+  await Business.findOneAndUpdate(
+    { owner: ownerId },
+    { $set: update }
+  );
+};
+
+const autoVerifyMinorityDocsIfMissing = async (application) => {
+  const hasMinorityProofDocuments = Array.isArray(application.minorityProofDocuments)
+    && application.minorityProofDocuments.length > 0;
+
+  if (hasMinorityProofDocuments || application.verificationChecklist.minorityDocs) {
+    return 0;
+  }
+
+  application.verificationChecklist.minorityDocs = true;
+  application.totalVerificationPoints += 10;
+  await application.save();
+  await syncBusinessPoints(application);
+
+  return 10;
+};
+
 /* =====================================================
    GET PENDING APPLICATIONS
 ===================================================== */
@@ -17,6 +49,10 @@ exports.getPendingApplications = async (req, res) => {
     const applications = await VendorOnboarding.find({})
       .populate('userId', 'name email')
       .sort({ submittedAt: -1, createdAt: -1 });
+
+    await Promise.all(
+      applications.map((application) => autoVerifyMinorityDocsIfMissing(application))
+    );
 
     return res.status(200).json({
       success: true,
@@ -70,6 +106,8 @@ exports.getApplicationDetails = async (req, res) => {
       });
     }
 
+    await autoVerifyMinorityDocsIfMissing(application);
+
     return res.status(200).json({
       success: true,
       data: application
@@ -121,6 +159,23 @@ exports.verifyAndAllocatePoints = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: 'Application not found'
+      });
+    }
+
+    const hasMinorityProofDocuments = Array.isArray(application.minorityProofDocuments)
+      && application.minorityProofDocuments.length > 0;
+
+    if (verificationType === 'minority-proof' && !hasMinorityProofDocuments) {
+      const autoAddedPoints = await autoVerifyMinorityDocsIfMissing(application);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Minority proof not uploaded. Auto-verified with 10 points.',
+        data: {
+          totalPoints: application.totalVerificationPoints,
+          pointsAdded: autoAddedPoints,
+          verificationChecklist: application.verificationChecklist
+        }
       });
     }
 
@@ -332,10 +387,7 @@ exports.verifyAndAllocatePoints = async (req, res) => {
     await application.save();
 
     // Keep Business points in sync with stage-1 onboarding points
-    await Business.findOneAndUpdate(
-      { owner: application.userId },
-      { $set: { points: application.totalVerificationPoints } }
-    );
+    await syncBusinessPoints(application);
 
     return res.status(200).json({
       success: true,
@@ -360,7 +412,7 @@ exports.verifyAndAllocatePoints = async (req, res) => {
 /* =====================================================
    FINALIZE VERIFICATION (APPROVE/REJECT)
 ===================================================== */
-
+// only checks for required documents and approves/rejects based on that. Points are not a factor in approval decision, but badge is still assigned based on points.  
 exports.finalizeVerification = async (req, res) => {
   try {
     const { applicationId } = req.params;
@@ -375,50 +427,73 @@ exports.finalizeVerification = async (req, res) => {
       });
     }
 
-    const totalPoints = application.totalVerificationPoints;
-    const previousStatus = application.status;
-    const previousBadge = application.badge;
+    await autoVerifyMinorityDocsIfMissing(application);
 
-    // Determine badge based on points
+    // ✅ Required docs check
+    const hasTaxDocs = Boolean(application.verificationChecklist?.taxDocs);
+    const hasBusinessLicense = Boolean(application.verificationChecklist?.businessLicense);
+
+    const hasMinorityDocs = application.isMinorityOwned
+      ? Boolean(application.verificationChecklist?.minorityDocs)
+      : true;
+
+    const hasRequiredDocsVerified =
+      hasTaxDocs && hasBusinessLicense && hasMinorityDocs;
+
+    // ❌ Missing docs
+    const missingRequiredDocuments = [];
+
+    if (!hasTaxDocs) {
+      missingRequiredDocuments.push('EIN document');
+    }
+
+    if (!hasBusinessLicense) {
+      missingRequiredDocuments.push('business license document');
+    }
+
+    if (application.isMinorityOwned && !hasMinorityDocs) {
+      missingRequiredDocuments.push('minority proof document');
+    }
+
+    const rejectionReason = ` ${missingRequiredDocuments.join(', ')}.`;
+
+    // ✅ Badge logic (kept as-is)
+    const totalPoints = application.totalVerificationPoints;
     let badge = null;
+
     if (totalPoints >= 80) badge = 'Diamond';
     else if (totalPoints >= 50) badge = 'Platinum';
     else if (totalPoints >= 40) badge = 'Gold';
     else if (totalPoints >= 30) badge = 'Silver';
 
-    // Update status and badge
-    if (totalPoints >= 30) {
+    // ✅ FINAL DECISION
+    if (hasRequiredDocsVerified) {
       application.status = 'verified';
       application.badge = badge;
     } else {
       application.status = 'rejected';
-      application.badge = badge; // could be null
+      application.badge = badge;
     }
 
     await application.save();
 
-    // Keep Business record in sync
-    await Business.findOneAndUpdate(
-      { owner: application.userId._id },
-      { $set: { points: totalPoints, badge } }
-    );
+    // ✅ Sync business
+    await syncBusinessPoints(application, badge);
 
     let emailSent = false;
 
-    // SCENARIO: Vendor approved or status changed to verified
+    // ✅ APPROVED
     if (application.status === 'verified') {
-      // Send approval email if status changed
-      if (previousStatus !== 'verified') {
-        await sendVendorApprovedEmail({
-          to: application.userId.email,
-          vendorName: application.userId.name,
-          applicationId: application.applicationId
-        });
-        emailSent = true;
-      }
+      await sendVendorApprovedEmail({
+        to: application.userId.email,
+        vendorName: application.userId.name,
+        applicationId: application.applicationId
+      });
 
-      // Send Trust Badge email if badge changed or first-time assigned
-      if (badge && badge !== previousBadge) {
+      emailSent = true;
+
+      // Optional badge email
+      if (badge) {
         await sendVendorTrustBadgeAssignedEmail({
           to: application.userId.email,
           vendorName: application.userId.name,
@@ -430,26 +505,35 @@ exports.finalizeVerification = async (req, res) => {
       return res.status(200).json({
         success: true,
         message: 'Application approved successfully',
-        data: { status: 'approved', points: totalPoints, badge, emailSent }
+        data: {
+          status: 'approved',
+          badge,
+          emailSent
+        }
       });
     }
 
-    // SCENARIO: Vendor rejected (<30 points)
+    // ❌ REJECTED
     if (application.status === 'rejected') {
-      if (previousStatus !== 'rejected') {
-        await sendVendorRejectionEmail({
-          to: application.userId.email,
-          vendorName: application.userId.name,
-          applicationId: application.applicationId,
-          points: totalPoints
-        });
-        emailSent = true;
-      }
+      await sendVendorRejectionEmail({
+        to: application.userId.email,
+        vendorName: application.userId.name,
+        applicationId: application.applicationId,
+        rejectionReason
+      });
+
+      emailSent = true;
 
       return res.status(200).json({
         success: true,
-        message: 'Application rejected due to insufficient points',
-        data: { status: 'rejected', points: totalPoints, badge, emailSent }
+        message: 'Application rejected due to missing required documents',
+        data: {
+          status: 'rejected',
+          badge,
+          emailSent,
+          missingRequiredDocuments,
+          rejectionReason
+        }
       });
     }
 
@@ -461,6 +545,142 @@ exports.finalizeVerification = async (req, res) => {
     });
   }
 };
+
+// exports.finalizeVerification = async (req, res) => {
+//   try {
+//     const { applicationId } = req.params;
+
+//     const application = await VendorOnboarding.findOne({ applicationId })
+//       .populate('userId', 'name email');
+
+//     if (!application) {
+//       return res.status(404).json({
+//         success: false,
+//         message: 'Application not found'
+//       });
+//     }
+
+//     await autoVerifyMinorityDocsIfMissing(application);
+
+//     const totalPoints = application.totalVerificationPoints;
+//     const previousStatus = application.status;
+//     const previousBadge = application.badge;
+//     const hasRequiredDocsVerified = Boolean(
+//       application.verificationChecklist?.minorityDocs
+//       && application.verificationChecklist?.taxDocs
+//       && application.verificationChecklist?.businessLicense
+//     );
+//     const missingRequiredDocuments = [];
+
+//     if (!application.verificationChecklist?.taxDocs) {
+//       missingRequiredDocuments.push('EIN document');
+//     }
+
+//     if (!application.verificationChecklist?.businessLicense) {
+//       missingRequiredDocuments.push('business license document');
+//     }
+
+//     const rejectionReason = totalPoints < 30
+//       ? 'Your application was rejected because it has fewer than 30 verification points.'
+//       : `Your application was rejected because the following required document(s) are not verified: ${missingRequiredDocuments.join(', ')}.`;
+
+//     // Determine badge based on points
+//     let badge = null;
+//     if (totalPoints >= 80) badge = 'Diamond';
+//     else if (totalPoints >= 50) badge = 'Platinum';
+//     else if (totalPoints >= 40) badge = 'Gold';
+//     else if (totalPoints >= 30) badge = 'Silver';
+
+//     // Update status and badge
+//     if (totalPoints >= 30 && hasRequiredDocsVerified) {
+//       application.status = 'verified';
+//       application.badge = badge;
+//     } else {
+//       application.status = 'rejected';
+//       application.badge = badge; // could be null
+//     }
+
+//     await application.save();
+
+//     // Keep Business record in sync
+//     await syncBusinessPoints(application, badge);
+
+//     let emailSent = false;
+
+//     // SCENARIO: Vendor approved or status changed to verified
+//     if (application.status === 'verified') {
+//       // Send approval email if status changed
+//       if (previousStatus !== 'verified') {
+//         await sendVendorApprovedEmail({
+//           to: application.userId.email,
+//           vendorName: application.userId.name,
+//           applicationId: application.applicationId
+//         });
+//         emailSent = true;
+//       }
+
+//       // Send Trust Badge email if badge changed or first-time assigned
+//       if (badge && badge !== previousBadge) {
+//         await sendVendorTrustBadgeAssignedEmail({
+//           to: application.userId.email,
+//           vendorName: application.userId.name,
+//           badgeName: badge
+//         });
+//         emailSent = true;
+//       }
+
+//       return res.status(200).json({
+//         success: true,
+//         message: 'Application approved successfully',
+//         data: { status: 'approved', points: totalPoints, badge, emailSent }
+//       });
+//     }
+
+//     // SCENARIO: Vendor rejected (<30 points)
+//     if (application.status === 'rejected') {
+//       if (previousStatus !== 'rejected') {
+//         await sendVendorRejectionEmail({
+//           to: application.userId.email,
+//           vendorName: application.userId.name,
+//           applicationId: application.applicationId,
+//           points: totalPoints,
+//           rejectionReason
+//         });
+//         emailSent = true;
+//       }
+
+//       return res.status(200).json({
+//         success: true,
+//         message: totalPoints < 30
+//           ? 'Application rejected due to insufficient points'
+//           : 'Application rejected because the required documents are not fully verified',
+//         data: {
+//           status: 'rejected',
+//           points: totalPoints,
+//           badge,
+//           emailSent,
+//           requiredDocsVerified: hasRequiredDocsVerified,
+//           missingRequiredDocuments,
+//           rejectionReason
+//         }
+//       });
+//     }
+
+//   } catch (error) {
+//     console.error('Finalize verification error:', error);
+//     return res.status(500).json({
+//       success: false,
+//       message: 'Failed to finalize verification'
+//     });
+//   }
+// };
+
+
+
+
+
+
+
 
 // exports.finalizeVerification = async (req, res) => {
 //   try {

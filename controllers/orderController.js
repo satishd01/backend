@@ -97,6 +97,97 @@ const ProductVariant = require("../models/ProductVariant");
 const Business = require("../models/Business");
 const { sendOrderStatusEmail } = require("../utils/orderPhase");
 
+const toNum = (value) => {
+  if (value && typeof value === "object" && value.$numberDecimal != null) {
+    return Number(value.$numberDecimal);
+  }
+
+  return value == null ? null : Number(value);
+};
+
+const getVariantAttribute = (variantDoc, key) => {
+  if (!variantDoc?.attributes) return null;
+
+  if (typeof variantDoc.attributes.get === "function") {
+    const direct = variantDoc.attributes.get(key);
+    if (direct != null) return direct;
+
+    const fallbackKey = Array.from(variantDoc.attributes.keys()).find(
+      (attrKey) =>
+        String(attrKey).toLowerCase() === String(key).toLowerCase()
+    );
+
+    return fallbackKey ? variantDoc.attributes.get(fallbackKey) : null;
+  }
+
+  const entries = Object.entries(variantDoc.attributes);
+  const match = entries.find(
+    ([attrKey]) => String(attrKey).toLowerCase() === String(key).toLowerCase()
+  );
+  return match ? match[1] : null;
+};
+
+const normalizeCapabilityStatus = (status) => {
+  return typeof status === "string" ? status.toLowerCase() : "inactive";
+};
+
+const getTransferCapabilityStatus = (account) => {
+  const capabilities = account?.capabilities || {};
+
+  return (
+    normalizeCapabilityStatus(capabilities.transfers) ||
+    normalizeCapabilityStatus(
+      capabilities?.stripe_balance?.stripe_transfers
+    ) ||
+    "inactive"
+  );
+};
+
+const resolveVariantSelection = (variantDoc, requestedValue) => {
+  const requested = requestedValue == null ? "" : String(requestedValue).trim();
+  const sizes = Array.isArray(variantDoc?.sizes) ? variantDoc.sizes : null;
+
+  if (sizes) {
+    const selectedSize = sizes.find((entry) => String(entry.size) === requested);
+    if (!selectedSize) return null;
+
+    return {
+      key: String(selectedSize.size),
+      stock: Number(selectedSize.stock || 0),
+      sku: selectedSize.sku || variantDoc.sku || null,
+      price: toNum(selectedSize.price),
+      salePrice: toNum(selectedSize.salePrice),
+      discountEndDate: selectedSize.discountEndDate || null,
+      allowBackorder: Boolean(variantDoc.allowBackorder),
+      stockSource: selectedSize,
+      usesNestedSizes: true,
+    };
+  }
+
+  const attributeSize = getVariantAttribute(variantDoc, "size");
+  const normalizedKey = requested || attributeSize || "default";
+
+  if (
+    attributeSize &&
+    requested &&
+    String(attributeSize).toLowerCase() !== requested.toLowerCase()
+  ) {
+    return null;
+  }
+
+  return {
+    key: String(normalizedKey),
+    stock: Number(variantDoc?.stock || 0),
+    sku: variantDoc?.sku || null,
+    price: toNum(variantDoc?.price),
+    salePrice: toNum(variantDoc?.salePrice),
+    discountEndDate: null,
+    allowBackorder: Boolean(variantDoc?.allowBackorder),
+    stockSource: variantDoc,
+    usesNestedSizes: false,
+  };
+};
+
 exports.initiateOrder = async (req, res) => {
   try {
     const { items, shippingAddress, userNote } = req.body;
@@ -152,29 +243,30 @@ exports.initiateOrder = async (req, res) => {
           .json({ success: false, message: "Product or variant not found" });
       }
 
-      const sizeObj = variant.sizes.find((s) => s.size === size);
-      if (!sizeObj) {
+      const selectedVariant = resolveVariantSelection(variant, size);
+      if (!selectedVariant) {
         return res
           .status(400)
           .json({ success: false, message: `Size ${size} not available` });
       }
 
-      if (!variant.allowBackorder && sizeObj.stock < quantity) {
+      if (!selectedVariant.allowBackorder && selectedVariant.stock < quantity) {
         return res
           .status(400)
           .json({ success: false, message: `${variant.productId.title} is Out of stock for size ${size} remove it first` });
       }
 
       // Verify price (handles sale price with end date)
-      const now = new Date();
+      const discountEnd = selectedVariant.discountEndDate
+        ? new Date(selectedVariant.discountEndDate)
+        : null;
       const validDiscount = !!(
-        sizeObj.salePrice &&
-        sizeObj.discountEndDate &&
-        new Date(sizeObj.discountEndDate) > now
+        selectedVariant.salePrice &&
+        (!discountEnd || discountEnd.getTime() > Date.now())
       );
       const actualPrice = validDiscount
-        ? Number(sizeObj.salePrice)
-        : Number(sizeObj.price);
+        ? Number(selectedVariant.salePrice)
+        : Number(selectedVariant.price);
       if (Number(price) !== actualPrice) {
         return res
           .status(400)
@@ -197,8 +289,8 @@ exports.initiateOrder = async (req, res) => {
         quantity,
         price: actualPrice,
         size,
-        sku: sizeObj.sku,
-        color: variant.color,
+        sku: selectedVariant.sku,
+        color: variant.color || getVariantAttribute(variant, "color") || "default",
       });
     }
 
@@ -225,6 +317,32 @@ exports.initiateOrder = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Vendor is not connected to Stripe. Please contact support.",
+      });
+    }
+
+    const account = await stripe.accounts.retrieve(business.stripeConnectAccountId);
+    const transferCapability = getTransferCapabilityStatus(account);
+
+    business.chargesEnabled = !!account.charges_enabled;
+    business.payoutsEnabled = !!account.payouts_enabled;
+    business.capabilities = {
+      card_payments: normalizeCapabilityStatus(account?.capabilities?.card_payments),
+      transfers: transferCapability,
+    };
+    business.onboardingStatus =
+      business.chargesEnabled && business.payoutsEnabled && transferCapability === "active"
+        ? "completed"
+        : "requirements_due";
+    if (business.onboardingStatus === "completed" && !business.onboardedAt) {
+      business.onboardedAt = new Date();
+    }
+    await business.save();
+
+    if (!business.chargesEnabled || transferCapability !== "active") {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Vendor Stripe onboarding is incomplete. The connected account can't receive transfers yet.",
       });
     }
 
@@ -284,6 +402,13 @@ exports.initiateOrder = async (req, res) => {
     });
   } catch (err) {
     console.error("Order initiation failed:", err);
+    if (err?.code === "insufficient_capabilities_for_transfer") {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Vendor Stripe onboarding is incomplete. The connected account needs transfer capability enabled before checkout can start.",
+      });
+    }
     return res.status(500).json({ success: false, message: "Server error" });
   }
 };
@@ -364,16 +489,25 @@ exports.acceptOrder = async (req, res) => {
       const variant = await ProductVariant.findById(item.variantId);
       if (!variant) continue;
 
-      const sizeObj = variant.sizes.find((s) => s.size === item.size);
-      if (sizeObj.stock === 0) {
+      const selectedVariant = resolveVariantSelection(variant, item.size);
+      if (!selectedVariant) {
+        return res.status(500).json({
+          success: false,
+          message: "Order Cannot Be Accepted - Item configuration is invalid",
+        });
+      }
+
+      if (selectedVariant.stock === 0) {
         return res.status(500).json({
           success: false,
           message: "Order Cannot Be Accepted - Item Out of Stock",
         });
-      };
-      if (sizeObj) {
-        sizeObj.stock = Math.max(0, sizeObj.stock - item.quantity); // Prevent negative
       }
+
+      selectedVariant.stockSource.stock = Math.max(
+        0,
+        Number(selectedVariant.stockSource.stock || 0) - Number(item.quantity || 0)
+      );
 
       await variant.save();
     }
@@ -799,9 +933,11 @@ exports.cancelOrderByUser = async (req, res) => {
         const variant = await ProductVariant.findById(item.variantId);
         if (!variant) continue;
 
-        const sizeObj = variant.sizes?.find((s) => s.size === item.size);
-        if (sizeObj) {
-          sizeObj.stock = Number(sizeObj.stock || 0) + Number(item.quantity || 0);
+        const selectedVariant = resolveVariantSelection(variant, item.size);
+        if (selectedVariant) {
+          selectedVariant.stockSource.stock =
+            Number(selectedVariant.stockSource.stock || 0) +
+            Number(item.quantity || 0);
         }
         await variant.save();
       }
@@ -852,3 +988,4 @@ exports.cancelOrderByUser = async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error" });
   }
 };
+

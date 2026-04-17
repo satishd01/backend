@@ -27,7 +27,7 @@ const serviceSchema = new mongoose.Schema({
   duration: {
     type: String, // Example: '1 hour', '30 minutes'
     required: false, // Made optional
-    default: '60 minutes',
+    default: '',
   },
   services: [
     {

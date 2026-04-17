@@ -3,6 +3,110 @@ const CartItem = require('../../models/CartItem');
 const Product = require('../../models/Product');
 const ProductVariant = require('../../models/ProductVariant');
 
+const toNum = (value) => {
+    if (value && typeof value === 'object' && value.$numberDecimal != null) {
+        return Number(value.$numberDecimal);
+    }
+    return value == null ? null : Number(value);
+};
+
+const normalizeShipping = (shipping) => {
+    if (!shipping) return null;
+
+    return {
+        standard: Number(shipping.standard || 0),
+        overnight: Number(shipping.overnight || 0),
+        local: Number(shipping.local || 0),
+    };
+};
+
+const getEffectiveShipping = (productDoc, variantDoc) => {
+    const variantShipping = normalizeShipping(variantDoc?.shipping);
+    const productShipping = normalizeShipping(productDoc?.shipping);
+
+    if (variantShipping && Object.values(variantShipping).some((value) => value > 0)) {
+        return variantShipping;
+    }
+
+    return productShipping || { standard: 0, overnight: 0, local: 0 };
+};
+
+const resolveRequestedShippingMethod = (body) => {
+    return body?.shippingMethod || body?.shippingType || body?.shippingOption || body?.shipping?.method || body?.shipping?.type || null;
+};
+
+const resolveShippingSelection = (productDoc, variantDoc, requestedMethod) => {
+    const shipping = getEffectiveShipping(productDoc, variantDoc);
+    const requested = requestedMethod ? String(requestedMethod).trim().toLowerCase() : 'standard';
+    const validMethods = ['standard', 'overnight', 'local'];
+
+    if (!validMethods.includes(requested)) {
+        return null;
+    }
+
+    const charge = Number(shipping[requested] || 0);
+    return {
+        shipping,
+        shippingMethod: requested,
+        shippingCharge: charge,
+    };
+};
+
+const getVariantAttribute = (variantDoc, key) => {
+    if (!variantDoc?.attributes) return null;
+
+    if (typeof variantDoc.attributes.get === 'function') {
+        const direct = variantDoc.attributes.get(key);
+        if (direct != null) return direct;
+
+        const fallbackKey = Array.from(variantDoc.attributes.keys()).find(
+            (attrKey) => String(attrKey).toLowerCase() === String(key).toLowerCase()
+        );
+        return fallbackKey ? variantDoc.attributes.get(fallbackKey) : null;
+    }
+
+    const entries = Object.entries(variantDoc.attributes);
+    const match = entries.find(([attrKey]) => String(attrKey).toLowerCase() === String(key).toLowerCase());
+    return match ? match[1] : null;
+};
+
+const resolveVariantSelection = (variantDoc, requestedValue) => {
+    const requested = requestedValue == null ? '' : String(requestedValue).trim();
+    const sizes = Array.isArray(variantDoc?.sizes) ? variantDoc.sizes : null;
+
+    if (sizes) {
+        const selectedSize = sizes.find((entry) => String(entry.size) === requested);
+        if (!selectedSize) return null;
+
+        return {
+            key: String(selectedSize.size),
+            stock: Number(selectedSize.stock || 0),
+            sku: selectedSize.sku || variantDoc.sku || null,
+            price: toNum(selectedSize.price),
+            salePrice: toNum(selectedSize.salePrice),
+            discountEndDate: selectedSize.discountEndDate || null,
+            allowBackorder: Boolean(variantDoc.allowBackorder),
+        };
+    }
+
+    const attributeSize = getVariantAttribute(variantDoc, 'size');
+    const normalizedKey = requested || attributeSize || 'default';
+
+    if (attributeSize && requested && String(attributeSize).toLowerCase() !== requested.toLowerCase()) {
+        return null;
+    }
+
+    return {
+        key: String(normalizedKey),
+        stock: Number(variantDoc?.stock || 0),
+        sku: variantDoc?.sku || null,
+        price: toNum(variantDoc?.price),
+        salePrice: toNum(variantDoc?.salePrice),
+        discountEndDate: null,
+        allowBackorder: Boolean(variantDoc?.allowBackorder),
+    };
+};
+
 // Add Item to Cart
 const addItemToCart = async (req, res) => {
     const { productId, variantId, quantity, variant } = req.body;
@@ -12,7 +116,6 @@ const addItemToCart = async (req, res) => {
         const qty = Number(quantity) || 1;
         if (qty < 1) return res.status(400).json({ message: 'Quantity must be at least 1' });
 
-        // Normalize requested size key (store as string for compatibility with getCart)
         const requestedSize = typeof variant === 'string' ? variant : variant?.size;
         if (!requestedSize) {
             return res.status(400).json({ message: 'Selected variant size/color not found' });
@@ -34,15 +137,23 @@ const addItemToCart = async (req, res) => {
         //   return res.status(400).json({ message: 'Variant does not belong to product' });
         // }
 
-        // Ensure the selected size exists
-        const selectedSize = variantData.sizes.find(s => s.size === requestedSize);
-        if (!selectedSize) {
+        const selectedVariant = resolveVariantSelection(variantData, requestedSize);
+        if (!selectedVariant) {
             return res.status(400).json({ message: 'Selected variant size/color not found' });
         }
 
+        const shippingSelection = resolveShippingSelection(
+            product,
+            variantData,
+            resolveRequestedShippingMethod(req.body)
+        );
+        if (!shippingSelection) {
+            return res.status(400).json({ message: 'Invalid shipping method selected' });
+        }
+
         // Stock / backorder checks on ADD
-        if (qty > selectedSize.stock && !variantData.allowBackorder) {
-            return res.status(422).json({ message: `Not enough stock. Only ${selectedSize.stock} left.` });
+        if (qty > selectedVariant.stock && !selectedVariant.allowBackorder) {
+            return res.status(422).json({ message: `Not enough stock. Only ${selectedVariant.stock} left.` });
         }
 
         // Determine business via product (safer)
@@ -72,17 +183,19 @@ const addItemToCart = async (req, res) => {
             _id: { $in: cart.items },
             productId: product._id,
             variantId: variantData._id,
-            variant: requestedSize, // stored as string
+            variant: selectedVariant.key,
+            shippingMethod: shippingSelection.shippingMethod,
         });
 
         if (existingLine) {
             const newQty = existingLine.quantity + qty;
 
-            if (newQty > selectedSize.stock && !variantData.allowBackorder) {
-                return res.status(422).json({ message: `Not enough stock. Only ${selectedSize.stock} left.` });
+            if (newQty > selectedVariant.stock && !selectedVariant.allowBackorder) {
+                return res.status(422).json({ message: `Not enough stock. Only ${selectedVariant.stock} left.` });
             }
 
             existingLine.quantity = newQty;
+            existingLine.shippingCharge = shippingSelection.shippingCharge;
             await existingLine.save();
         } else {
             // Create new line
@@ -92,7 +205,9 @@ const addItemToCart = async (req, res) => {
                 variantId: variantData._id,
                 businessId,
                 quantity: qty,
-                variant: requestedSize, // store size string
+                variant: selectedVariant.key,
+                shippingMethod: shippingSelection.shippingMethod,
+                shippingCharge: shippingSelection.shippingCharge,
             });
             await cartItem.save();
 
@@ -129,8 +244,8 @@ const getCart = async (req, res) => {
             .populate({
                 path: 'items',
                 populate: [
-                    { path: 'productId', select: 'title coverImage isPublished isDeleted', match: { isPublished: true, isDeleted: false } },  // Populate product details (name, coverImage) and ensure it's published and not deleted
-                    { path: 'variantId', select: 'color label sizes allowBackorder isPublished isDeleted images', match: { isPublished: true, isDeleted: false } },  // Populate variant details and ensure it's published and not deleted
+                    { path: 'productId', select: 'title coverImage shipping isPublished isDeleted', match: { isPublished: true, isDeleted: false } },  // Populate product details (name, coverImage) and ensure it's published and not deleted
+                    { path: 'variantId', select: 'attributes sku price salePrice stock color label sizes allowBackorder shipping isPublished isDeleted images', match: { isPublished: true, isDeleted: false } },  // Populate variant details and ensure it's published and not deleted
                 ],
             });
 
@@ -152,30 +267,26 @@ const getCart = async (req, res) => {
                 return null; // Return null to exclude this item from the response
             }
 
-            // Find the selected size's details
-            const selectedSize = variant.sizes.find(size => size.size === cartItem.variant);
-
-
-            if (!selectedSize) {
+            const selectedVariant = resolveVariantSelection(variant, cartItem.variant);
+            if (!selectedVariant) {
                 // If size not found in the variant, remove the cart item
                 invalidItems.push(cartItem._id);
                 return null; // Exclude this item from the response
             }
 
-            // Compute selectedSizePrice with discount validity
-            const toNum = (v) =>
-                v && typeof v === 'object' && v.$numberDecimal != null ? Number(v.$numberDecimal) : Number(v);
+            const discountEnd = selectedVariant.discountEndDate ? new Date(selectedVariant.discountEndDate) : null;
+            const useSale = !!selectedVariant.salePrice && (!discountEnd || discountEnd.getTime() > Date.now());
 
-            const discountEnd = selectedSize?.discountEndDate ? new Date(selectedSize.discountEndDate) : null;
-            // Use salePrice ONLY if it exists AND discountEndDate exists AND is in the future
-            const useSale =
-                !!selectedSize?.salePrice &&
-                !!discountEnd &&
-                discountEnd.getTime() > Date.now();
-
-            const price = toNum(selectedSize.price);
-            const salePrice = toNum(selectedSize.salePrice);
+            const price = toNum(selectedVariant.price);
+            const salePrice = toNum(selectedVariant.salePrice);
             const selectedSizePrice = useSale ? salePrice : price;
+            const shipping = getEffectiveShipping(product, variant);
+            const shippingMethod = ['standard', 'overnight', 'local'].includes(cartItem.shippingMethod)
+                ? cartItem.shippingMethod
+                : 'standard';
+            const shippingCharge = Number(
+                cartItem.shippingCharge != null ? cartItem.shippingCharge : (shipping[shippingMethod] || 0)
+            );
 
 
             // Return only necessary details (price is calculated on the frontend)
@@ -185,17 +296,19 @@ const getCart = async (req, res) => {
                 variantId: variant._id,
                 businessId: cartItem.businessId,
                 quantity: cartItem.quantity,
-                size: selectedSize.size,
-                color: variant.color,
-                label: variant.label,
-                stock: selectedSize.stock,
-                sku: selectedSize.sku,
+                size: selectedVariant.key,
+                color: variant.color || getVariantAttribute(variant, 'color'),
+                label: variant.label || selectedVariant.key,
+                stock: selectedVariant.stock,
+                sku: selectedVariant.sku,
                 salePrice,
-                discountEndDate: selectedSize.discountEndDate,
+                discountEndDate: selectedVariant.discountEndDate,
                 price,
                 selectedSizePrice,  // Send salePrice/price for frontend calculation
-                imageUrl: variant.images[0],  // Send image URL to display in cart
-                allowBackorder: variant.allowBackorder,  // Send allowBackorder flag
+                shippingMethod,
+                shippingCharge,
+                imageUrl: Array.isArray(variant.images) ? variant.images[0] : null,
+                allowBackorder: selectedVariant.allowBackorder,
             };
         });
 
@@ -251,14 +364,14 @@ const updateCartItem = async (req, res) => {
         }
 
         // Size lookup (cartItem.variant is the size string)
-        const selectedSize = variantData.sizes.find(s => s.size === cartItem.variant);
-        if (!selectedSize) {
+        const selectedVariant = resolveVariantSelection(variantData, cartItem.variant);
+        if (!selectedVariant) {
             return res.status(400).json({ message: 'Variant size/color not found' });
         }
 
         // Stock / backorder (variant-level allowBackorder)
-        if (qty > selectedSize.stock && !variantData.allowBackorder) {
-            return res.status(422).json({ message: `Not enough stock for the selected variant. Only ${selectedSize.stock} left.` });
+        if (qty > selectedVariant.stock && !selectedVariant.allowBackorder) {
+            return res.status(422).json({ message: `Not enough stock for the selected variant. Only ${selectedVariant.stock} left.` });
         }
 
         // Update quantity
@@ -324,7 +437,6 @@ const removeItemFromCart = async (req, res) => {
 const updateCartItemByComposite = async (req, res) => {
     try {
         const { productId, variantId, quantity } = req.body;
-        // accept either { size } or { variant: { size } }
         const size = req.body.size || req.body?.variant?.size;
         const qty = Number(quantity);
 
@@ -344,7 +456,8 @@ const updateCartItemByComposite = async (req, res) => {
             _id: { $in: cart.items },
             productId,
             variantId,
-            variant: size, // we store size string in "variant" field
+            variant: size,
+            ...(resolveRequestedShippingMethod(req.body) ? { shippingMethod: resolveRequestedShippingMethod(req.body) } : {}),
         });
         if (!line) return res.status(404).json({ message: 'Cart item not found' });
 
@@ -359,10 +472,10 @@ const updateCartItemByComposite = async (req, res) => {
         }
 
         // Size + stock/backorder
-        const selectedSize = variantData.sizes.find(s => s.size === size);
-        if (!selectedSize) return res.status(400).json({ message: 'Variant size/color not found' });
-        if (qty > selectedSize.stock && !variantData.allowBackorder) {
-            return res.status(422).json({ message: `Not enough stock. Only ${selectedSize.stock} left.` });
+        const selectedVariant = resolveVariantSelection(variantData, size);
+        if (!selectedVariant) return res.status(400).json({ message: 'Variant size/color not found' });
+        if (qty > selectedVariant.stock && !selectedVariant.allowBackorder) {
+            return res.status(422).json({ message: `Not enough stock. Only ${selectedVariant.stock} left.` });
         }
 
         // Update quantity
@@ -400,6 +513,7 @@ const removeItemByComposite = async (req, res) => {
             productId,
             variantId,
             variant: size,
+            ...(resolveRequestedShippingMethod(req.body) ? { shippingMethod: resolveRequestedShippingMethod(req.body) } : {}),
         });
         if (!line) return res.status(404).json({ message: 'Cart item not found' });
 
@@ -681,21 +795,24 @@ mergeGuestCart = async (req, res) => {
         for (const it of items) {
             if (!it || !it.productId || !it.variantId) continue;
             // DB expects `variant` (string) — map incoming `size` → `variant`
-            const variantStr = String(it.size ?? "").trim();
+            const variantStr = String(it.size ?? it?.variant?.size ?? "").trim();
             if (!variantStr) continue;
             const inc = Math.max(1, Number(it.quantity || 1))
+            const shippingMethod = resolveRequestedShippingMethod(it) || 'standard';
 
             const existing = await CartItem.findOne({
                 _id: { $in: cart.items },
                 productId: it.productId,
                 variantId: it.variantId,
                 variant: variantStr,
+                shippingMethod,
                 userId,                         // required by schema
                 businessId: cart.businessId,    // required by schema
             });
 
             if (existing) {
                 existing.quantity = Math.max(1, Number(existing.quantity || 0) + inc);
+                existing.shippingCharge = Number(it.shippingCharge || existing.shippingCharge || 0);
                 await existing.save();
             } else {
                 const created = await CartItem.create({
@@ -704,6 +821,8 @@ mergeGuestCart = async (req, res) => {
                     businessId: cart.businessId, // required
                     userId,                      // required
                     variant: variantStr,         // required (string)
+                    shippingMethod,
+                    shippingCharge: Number(it.shippingCharge || 0),
                     quantity: inc,
                 });
                 await Cart.updateOne({ _id: cart._id }, { $addToSet: { items: created._id } });
