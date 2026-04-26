@@ -58,6 +58,50 @@ exports.sendVendorNewServiceBookingEmail = async ({
   });
 };
 
+exports.sendCustomerNewServiceBookingConfirmationEmail = async ({
+  to,
+  customerName,
+  serviceTitle,
+  vendorName,
+  date,
+  slot,
+  services,
+  bookingId,
+}) => {
+  if (!to) return;
+
+  const bookingsLink = 'https://app.mosaicbizhub.com/customer/bookings';
+
+  const selectedServices = Array.isArray(services) && services.length > 0
+    ? services.map((item) => `<li>${safe(item)}</li>`).join('')
+    : '<li>No service names provided</li>';
+
+  await transporter.sendMail({
+    from: `"Mosaic Biz Hub" <${process.env.MAIL_USER}>`,
+    to,
+    subject: 'Your service booking request has been received',
+    html: `
+      <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+        <h2>Hi ${safe(customerName, 'Customer')},</h2>
+        <p>Your service booking request has been received successfully.</p>
+        <p><strong>Booking ID:</strong> ${safe(bookingId)}</p>
+        <p><strong>Service:</strong> ${safe(serviceTitle)}</p>
+        <p><strong>Vendor:</strong> ${safe(vendorName)}</p>
+        <p><strong>Date:</strong> ${safe(date)}</p>
+        <p><strong>Slot:</strong> ${safe(slot)}</p>
+        <p><strong>Requested Services:</strong></p>
+        <ul>${selectedServices}</ul>
+        <p>We will notify you once the vendor reviews your request.</p>
+        <p>
+          <a href="${bookingsLink}" style="display:inline-block;padding:10px 18px;background:#0d6efd;color:#fff;text-decoration:none;border-radius:4px;">
+            View My Bookings
+          </a>
+        </p>
+      </div>
+    `,
+  });
+};
+
 exports.sendCustomerServicePaymentRequestEmail = async ({
   to,
   customerName,

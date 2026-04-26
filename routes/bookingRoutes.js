@@ -10,6 +10,9 @@ const {
   getVendorBookings,
   getVendorServiceBookings,
   getVendorFoodBookings,
+  getCustomerBookings,
+  getCustomerServiceBookings,
+  getCustomerFoodBookings,
   updateBookingStatus,
   deleteBooking,
 } = require('../controllers/bookingController');
@@ -27,6 +30,9 @@ router.post('/food/:foodId', authenticate, isCustomer, createFoodBooking);
 router.get('/vendor', authenticate, isBusinessOwner, getVendorBookings);
 router.get('/vendor/service', authenticate, isBusinessOwner, getVendorServiceBookings);
 router.get('/vendor/food', authenticate, isBusinessOwner, getVendorFoodBookings);
+router.get('/customer', authenticate, isCustomer, getCustomerBookings);
+router.get('/customer/service', authenticate, isCustomer, getCustomerServiceBookings);
+router.get('/customer/food', authenticate, isCustomer, getCustomerFoodBookings);
 router.put('/service/:id/request-payment', authenticate, isBusinessOwner, requestServiceBookingPayment);
 router.put('/service/:id/approve', authenticate, isBusinessOwner, approveServiceBooking);
 router.put('/service/:id/reject', authenticate, isBusinessOwner, rejectServiceBooking);

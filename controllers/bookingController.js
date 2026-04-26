@@ -5,6 +5,7 @@ const Business = require('../models/Business');
 const User = require('../models/User');
 const {
   sendVendorNewServiceBookingEmail,
+  sendCustomerNewServiceBookingConfirmationEmail,
   sendCustomerServicePaymentRequestEmail,
   sendCustomerServiceBookingDecisionEmail,
 } = require('../utils/bookingMailer');
@@ -131,6 +132,21 @@ exports.createServiceBooking = async (req, res) => {
       });
     } catch (mailError) {
       console.error('Failed to send new service booking email to vendor:', mailError);
+    }
+
+    try {
+      await sendCustomerNewServiceBookingConfirmationEmail({
+        to: email,
+        customerName: name,
+        serviceTitle: service.title,
+        vendorName: owner?.name || business?.businessName || 'Vendor',
+        date: formatBookingDate(date),
+        slot,
+        services: normalizedServices,
+        bookingId: newBooking._id.toString(),
+      });
+    } catch (mailError) {
+      console.error('Failed to send service booking confirmation email to customer:', mailError);
     }
 
     res.status(201).json({ success: true, booking: newBooking });
@@ -383,6 +399,45 @@ exports.getVendorServiceBookings = async (req, res) => {
 exports.getVendorFoodBookings = async (req, res) => {
   req.query.bookingType = 'food';
   return exports.getVendorBookings(req, res);
+};
+
+exports.getCustomerBookings = async (req, res) => {
+  try {
+    const { status, bookingType } = req.query;
+
+    const query = {
+      customerId: getAuthenticatedUserId(req),
+    };
+
+    if (status) {
+      query.status = status;
+    }
+
+    if (bookingType) {
+      query.bookingType = bookingType;
+    }
+
+    const bookings = await Booking.find(query)
+      .populate('businessId', 'businessName email')
+      .populate('serviceId', 'title')
+      .populate('foodId', 'title')
+      .sort({ createdAt: -1 });
+
+    res.json({ success: true, bookings });
+  } catch (error) {
+    console.error('Error in getCustomerBookings:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch customer bookings', error: error.message });
+  }
+};
+
+exports.getCustomerServiceBookings = async (req, res) => {
+  req.query.bookingType = 'service';
+  return exports.getCustomerBookings(req, res);
+};
+
+exports.getCustomerFoodBookings = async (req, res) => {
+  req.query.bookingType = 'food';
+  return exports.getCustomerBookings(req, res);
 };
 
 exports.updateBookingStatus = async (req, res) => {

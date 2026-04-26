@@ -107,7 +107,8 @@ exports.verifyOtp = async (req, res) => {
         // Send welcome email
         try {
             const firstName = user.name.split(' ')[0];
-            await sendWelcomeEmail(user.email, firstName);
+            // await sendWelcomeEmail(user.email, firstName);/
+            await sendWelcomeEmail(user.email, firstName, user.role);
         } catch (emailError) {
             console.error('Failed to send welcome email:', emailError);
         }

@@ -93,9 +93,10 @@ const Stripe = require("stripe");
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 const Order = require("../models/Order");
-const ProductVariant = require("../models/ProductVariant");
+const User = require("../models/User");
+const ProductVariant = require("../models/ProductVariant")  ;
 const Business = require("../models/Business");
-const { sendOrderStatusEmail } = require("../utils/orderPhase");
+const { sendOrderStatusEmail, sendOrderUpdateEmail, sendVendorNewOrderEmail, sendCustomerOrderPlacedEmail } = require("../utils/orderPhase");
 
 const toNum = (value) => {
   if (value && typeof value === "object" && value.$numberDecimal != null) {
@@ -188,15 +189,242 @@ const resolveVariantSelection = (variantDoc, requestedValue) => {
   };
 };
 
+// exports.initiateOrder = async (req, res) => {
+//   try {
+//     const { items, shippingAddress, userNote } = req.body;
+//     const userId = req.user.id;
+
+//     if (!Array.isArray(items) || items.length === 0) {
+//       return res
+//         .status(400)
+//         .json({ success: false, message: "Items are required" });
+//     }
+
+//     if (
+//       !shippingAddress?.fullName ||
+//       !shippingAddress?.phone ||
+//       !shippingAddress?.addressLine1
+//     ) {
+//       return res
+//         .status(400)
+//         .json({ success: false, message: "Shipping address is incomplete" });
+//     }
+
+//     // Build vendor map (to detect multiple vendors) & validate each item
+//     const vendorItemMap = {};
+//     const seen = new Set();
+
+//     for (const item of items) {
+//       const { productId, variantId, size, quantity, price } = item;
+//       if (!productId || !variantId || !size || !quantity || !price) {
+//         return res
+//           .status(400)
+//           .json({ success: false, message: "Invalid item structure" });
+//       }
+
+//       const key = `${variantId}-${size}`;
+//       if (seen.has(key)) {
+//         return res
+//           .status(400)
+//           .json({ success: false, message: "Duplicate item in cart" });
+//       }
+//       seen.add(key);
+
+//       const variant = await ProductVariant.findById(variantId).populate(
+//         "productId"
+//       ); // ensures product linkage integrity
+
+//       if (
+//         !variant ||
+//         !variant.productId ||
+//         variant.productId._id.toString() !== productId
+//       ) {
+//         return res
+//           .status(404)
+//           .json({ success: false, message: "Product or variant not found" });
+//       }
+
+//       const selectedVariant = resolveVariantSelection(variant, size);
+//       if (!selectedVariant) {
+//         return res
+//           .status(400)
+//           .json({ success: false, message: `Size ${size} not available` });
+//       }
+
+//       if (!selectedVariant.allowBackorder && selectedVariant.stock < quantity) {
+//         return res
+//           .status(400)
+//           .json({ success: false, message: `${variant.productId.title} is Out of stock for size ${size} remove it first` });
+//       }
+
+//       // Verify price (handles sale price with end date)
+//       const discountEnd = selectedVariant.discountEndDate
+//         ? new Date(selectedVariant.discountEndDate)
+//         : null;
+//       const validDiscount = !!(
+//         selectedVariant.salePrice &&
+//         (!discountEnd || discountEnd.getTime() > Date.now())
+//       );
+//       const actualPrice = validDiscount
+//         ? Number(selectedVariant.salePrice)
+//         : Number(selectedVariant.price);
+//       if (Number(price) !== actualPrice) {
+//         return res
+//           .status(400)
+//           .json({ success: false, message: `Price mismatch for size ${size}` });
+//       }
+
+//       const vendorId = variant.ownerId.toString();
+
+//       // Collect items per vendor
+//       if (!vendorItemMap[vendorId]) {
+//         vendorItemMap[vendorId] = {
+//           businessId: variant.businessId,
+//           items: [],
+//         };
+//       }
+
+//       vendorItemMap[vendorId].items.push({
+//         productId,
+//         variantId,
+//         quantity,
+//         price: actualPrice,
+//         size,
+//         sku: selectedVariant.sku,
+//         color: variant.color || getVariantAttribute(variant, "color") || "default",
+//       });
+//     }
+
+//     // Enforce single-vendor checkout (for now)
+//     const vendorIds = Object.keys(vendorItemMap);
+//     if (vendorIds.length !== 1) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Single-vendor checkout only at this time.",
+//       });
+//     }
+
+//     // Compute totals and create a single order
+//     const vendorId = vendorIds[0];
+//     const { businessId, items: vendorItems } = vendorItemMap[vendorId];
+//     const totalAmount = vendorItems.reduce(
+//       (sum, i) => sum + i.price * i.quantity,
+//       0
+//     );
+
+//     // Load Business to get Connect account
+//     const business = await Business.findById(businessId);
+//     if (!business || !business.stripeConnectAccountId) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Vendor is not connected to Stripe. Please contact support.",
+//       });
+//     }
+
+//     const account = await stripe.accounts.retrieve(business.stripeConnectAccountId);
+//     const transferCapability = getTransferCapabilityStatus(account);
+
+//     business.chargesEnabled = !!account.charges_enabled;
+//     business.payoutsEnabled = !!account.payouts_enabled;
+//     business.capabilities = {
+//       card_payments: normalizeCapabilityStatus(account?.capabilities?.card_payments),
+//       transfers: transferCapability,
+//     };
+//     business.onboardingStatus =
+//       business.chargesEnabled && business.payoutsEnabled && transferCapability === "active"
+//         ? "completed"
+//         : "requirements_due";
+//     if (business.onboardingStatus === "completed" && !business.onboardedAt) {
+//       business.onboardedAt = new Date();
+//     }
+//     await business.save();
+
+//     if (!business.chargesEnabled || transferCapability !== "active") {
+//       return res.status(400).json({
+//         success: false,
+//         message:
+//           "Vendor Stripe onboarding is incomplete. The connected account can't receive transfers yet.",
+//       });
+//     }
+
+//     const groupOrderId = uuidv4();
+
+//     const order = await new Order({
+//       groupOrderId,
+//       userId,
+//       vendorId,
+//       businessId,
+//       items: vendorItems,
+//       totalAmount, // kept in major units (USD); Stripe gets cents below
+//       currency: "USD",
+//       status: "created",
+//       statusHistory: [{ status: "created" }],
+//       shippingAddress,
+//       userNote,
+//       paymentStatus: "pending",
+//       paymentMethod: "stripe",
+//     }).save();
+
+//     // Platform fee in cents (e.g., 50 => $0.50). Set via env.
+//     const platformFeeCents = Number.parseInt(
+//       process.env.PLATFORM_FEE_CENTS || "0"
+//     );
+
+//     // Create a vendor-directed PaymentIntent with Connect transfer
+//     const paymentIntent = await stripe.paymentIntents.create(
+//       {
+//         amount: Math.round(totalAmount * 100), // cents
+//         currency: "usd",
+//         metadata: {
+//           groupOrderId,
+//           orderId: order._id.toString(),
+//         },
+//         application_fee_amount: platformFeeCents,
+//         transfer_data: {
+//           destination: business.stripeConnectAccountId,
+//         },
+//       },
+//       {
+//         // Helps prevent accidental duplicate charges on retries
+//         idempotencyKey: `pi:${order._id.toString()}`,
+//       }
+//     );
+
+//     // Save PI id on order
+//     order.paymentId = paymentIntent.id;
+//     await order.save();
+
+//     return res.status(201).json({
+//       success: true,
+//       message: "Order initialized",
+//       groupOrderId,
+//       orderId: order._id,
+//       clientSecret: paymentIntent.client_secret,
+//     });
+//   } catch (err) {
+//     console.error("Order initiation failed:", err);
+//     if (err?.code === "insufficient_capabilities_for_transfer") {
+//       return res.status(400).json({
+//         success: false,
+//         message:
+//           "Vendor Stripe onboarding is incomplete. The connected account needs transfer capability enabled before checkout can start.",
+//       });
+//     }
+//     return res.status(500).json({ success: false, message: "Server error" });
+//   }
+// };
+
+
 exports.initiateOrder = async (req, res) => {
   try {
     const { items, shippingAddress, userNote } = req.body;
     const userId = req.user.id;
 
     if (!Array.isArray(items) || items.length === 0) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Items are required" });
+      return res.status(400).json({
+        success: false,
+        message: "Items are required",
+      });
     }
 
     if (
@@ -204,78 +432,86 @@ exports.initiateOrder = async (req, res) => {
       !shippingAddress?.phone ||
       !shippingAddress?.addressLine1
     ) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Shipping address is incomplete" });
+      return res.status(400).json({
+        success: false,
+        message: "Shipping address is incomplete",
+      });
     }
 
-    // Build vendor map (to detect multiple vendors) & validate each item
     const vendorItemMap = {};
     const seen = new Set();
 
     for (const item of items) {
       const { productId, variantId, size, quantity, price } = item;
+
       if (!productId || !variantId || !size || !quantity || !price) {
-        return res
-          .status(400)
-          .json({ success: false, message: "Invalid item structure" });
+        return res.status(400).json({
+          success: false,
+          message: "Invalid item structure",
+        });
       }
 
       const key = `${variantId}-${size}`;
       if (seen.has(key)) {
-        return res
-          .status(400)
-          .json({ success: false, message: "Duplicate item in cart" });
+        return res.status(400).json({
+          success: false,
+          message: "Duplicate item in cart",
+        });
       }
       seen.add(key);
 
       const variant = await ProductVariant.findById(variantId).populate(
         "productId"
-      ); // ensures product linkage integrity
+      );
 
       if (
         !variant ||
         !variant.productId ||
         variant.productId._id.toString() !== productId
       ) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Product or variant not found" });
+        return res.status(404).json({
+          success: false,
+          message: "Product or variant not found",
+        });
       }
 
       const selectedVariant = resolveVariantSelection(variant, size);
+
       if (!selectedVariant) {
-        return res
-          .status(400)
-          .json({ success: false, message: `Size ${size} not available` });
+        return res.status(400).json({
+          success: false,
+          message: `Size ${size} not available`,
+        });
       }
 
       if (!selectedVariant.allowBackorder && selectedVariant.stock < quantity) {
-        return res
-          .status(400)
-          .json({ success: false, message: `${variant.productId.title} is Out of stock for size ${size} remove it first` });
+        return res.status(400).json({
+          success: false,
+          message: `${variant.productId.title} is out of stock for size ${size}`,
+        });
       }
 
-      // Verify price (handles sale price with end date)
       const discountEnd = selectedVariant.discountEndDate
         ? new Date(selectedVariant.discountEndDate)
         : null;
-      const validDiscount = !!(
+
+      const validDiscount =
         selectedVariant.salePrice &&
-        (!discountEnd || discountEnd.getTime() > Date.now())
-      );
+        (!discountEnd || discountEnd.getTime() > Date.now());
+
       const actualPrice = validDiscount
         ? Number(selectedVariant.salePrice)
         : Number(selectedVariant.price);
+
       if (Number(price) !== actualPrice) {
-        return res
-          .status(400)
-          .json({ success: false, message: `Price mismatch for size ${size}` });
+        return res.status(400).json({
+          success: false,
+          message: `Price mismatch for size ${size}`,
+        });
       }
 
       const vendorId = variant.ownerId.toString();
 
-      // Collect items per vendor
       if (!vendorItemMap[vendorId]) {
         vendorItemMap[vendorId] = {
           businessId: variant.businessId,
@@ -290,12 +526,15 @@ exports.initiateOrder = async (req, res) => {
         price: actualPrice,
         size,
         sku: selectedVariant.sku,
-        color: variant.color || getVariantAttribute(variant, "color") || "default",
+        color:
+          variant.color ||
+          getVariantAttribute(variant, "color") ||
+          "default",
       });
     }
 
-    // Enforce single-vendor checkout (for now)
     const vendorIds = Object.keys(vendorItemMap);
+
     if (vendorIds.length !== 1) {
       return res.status(400).json({
         success: false,
@@ -303,46 +542,57 @@ exports.initiateOrder = async (req, res) => {
       });
     }
 
-    // Compute totals and create a single order
     const vendorId = vendorIds[0];
     const { businessId, items: vendorItems } = vendorItemMap[vendorId];
+
     const totalAmount = vendorItems.reduce(
       (sum, i) => sum + i.price * i.quantity,
       0
     );
 
-    // Load Business to get Connect account
+    // Load user + business
     const business = await Business.findById(businessId);
+    const user = await User.findById(userId).select("email");
+
     if (!business || !business.stripeConnectAccountId) {
       return res.status(400).json({
         success: false,
-        message: "Vendor is not connected to Stripe. Please contact support.",
+        message: "Vendor is not connected to Stripe.",
       });
     }
 
-    const account = await stripe.accounts.retrieve(business.stripeConnectAccountId);
+    const account = await stripe.accounts.retrieve(
+      business.stripeConnectAccountId
+    );
+
     const transferCapability = getTransferCapabilityStatus(account);
 
     business.chargesEnabled = !!account.charges_enabled;
     business.payoutsEnabled = !!account.payouts_enabled;
     business.capabilities = {
-      card_payments: normalizeCapabilityStatus(account?.capabilities?.card_payments),
+      card_payments: normalizeCapabilityStatus(
+        account?.capabilities?.card_payments
+      ),
       transfers: transferCapability,
     };
+
     business.onboardingStatus =
-      business.chargesEnabled && business.payoutsEnabled && transferCapability === "active"
+      business.chargesEnabled &&
+      business.payoutsEnabled &&
+      transferCapability === "active"
         ? "completed"
         : "requirements_due";
+
     if (business.onboardingStatus === "completed" && !business.onboardedAt) {
       business.onboardedAt = new Date();
     }
+
     await business.save();
 
     if (!business.chargesEnabled || transferCapability !== "active") {
       return res.status(400).json({
         success: false,
-        message:
-          "Vendor Stripe onboarding is incomplete. The connected account can't receive transfers yet.",
+        message: "Vendor Stripe onboarding incomplete.",
       });
     }
 
@@ -354,7 +604,7 @@ exports.initiateOrder = async (req, res) => {
       vendorId,
       businessId,
       items: vendorItems,
-      totalAmount, // kept in major units (USD); Stripe gets cents below
+      totalAmount,
       currency: "USD",
       status: "created",
       statusHistory: [{ status: "created" }],
@@ -364,15 +614,13 @@ exports.initiateOrder = async (req, res) => {
       paymentMethod: "stripe",
     }).save();
 
-    // Platform fee in cents (e.g., 50 => $0.50). Set via env.
     const platformFeeCents = Number.parseInt(
       process.env.PLATFORM_FEE_CENTS || "0"
     );
 
-    // Create a vendor-directed PaymentIntent with Connect transfer
     const paymentIntent = await stripe.paymentIntents.create(
       {
-        amount: Math.round(totalAmount * 100), // cents
+        amount: Math.round(totalAmount * 100),
         currency: "usd",
         metadata: {
           groupOrderId,
@@ -384,14 +632,39 @@ exports.initiateOrder = async (req, res) => {
         },
       },
       {
-        // Helps prevent accidental duplicate charges on retries
         idempotencyKey: `pi:${order._id.toString()}`,
       }
     );
 
-    // Save PI id on order
     order.paymentId = paymentIntent.id;
     await order.save();
+
+    // =========================
+    // 📧 EMAILS (CUSTOMER + VENDOR)
+    // =========================
+    try {
+      const orderUrlCustomer =
+        "https://app.mosaicbizhub.com/customer/order";
+
+      const orderUrlVendor =
+        "https://app.mosaicbizhub.com/partners/orders";
+
+      // 👤 CUSTOMER EMAIL
+      if (user?.email) {
+        await sendCustomerOrderPlacedEmail(user.email, order, orderUrlCustomer);
+      }
+
+      // 👨‍💼 VENDOR EMAIL
+      if (business?.email) {
+        await sendVendorNewOrderEmail(
+          business.email,
+          order,
+          orderUrlVendor
+        );
+      }
+    } catch (err) {
+      console.error("Email sending failed:", err);
+    }
 
     return res.status(201).json({
       success: true,
@@ -402,16 +675,21 @@ exports.initiateOrder = async (req, res) => {
     });
   } catch (err) {
     console.error("Order initiation failed:", err);
+
     if (err?.code === "insufficient_capabilities_for_transfer") {
       return res.status(400).json({
         success: false,
-        message:
-          "Vendor Stripe onboarding is incomplete. The connected account needs transfer capability enabled before checkout can start.",
+        message: "Vendor Stripe onboarding incomplete.",
       });
     }
-    return res.status(500).json({ success: false, message: "Server error" });
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
   }
-};
+};  
+
 
 exports.getUserOrders = async (req, res) => {
   try {
@@ -620,17 +898,20 @@ exports.shipOrder = async (req, res) => {
     const { trackingId, trackingUrl, vendorNote } = req.body;
 
     if (!trackingId || !trackingUrl) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Tracking ID and URL are required" });
+      return res.status(400).json({
+        success: false,
+        message: "Tracking ID and URL are required",
+      });
     }
 
-    const order = await Order.findOne({ _id: orderId, vendorId });
+    const order = await Order.findOne({ _id: orderId, vendorId })
+      .populate("userId", "email"); // ✅ FIX
 
     if (!order) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Order not found or unauthorized" });
+      return res.status(404).json({
+        success: false,
+        message: "Order not found or unauthorized",
+      });
     }
 
     if (order.status !== "accepted") {
@@ -648,6 +929,15 @@ exports.shipOrder = async (req, res) => {
 
     await order.save();
 
+    // ✅ FIX EMAIL SENDING
+    const email = order.userId?.email;
+
+    if (email) {
+      await sendOrderUpdateEmail(email, "shipped", trackingUrl);
+    } else {
+      console.error("Missing user email for order:", order._id);
+    }
+
     res.json({
       success: true,
       message: "Order marked as shipped",
@@ -659,33 +949,47 @@ exports.shipOrder = async (req, res) => {
   }
 };
 
-
 exports.deliverOrder = async (req, res) => {
   try {
     const vendorId = req.user.id;
     const orderId = req.params.orderId;
 
-    const order = await Order.findOne({ _id: orderId, vendorId });
+    const order = await Order.findOne({ _id: orderId, vendorId })
+      .populate("userId", "email"); // ✅ IMPORTANT FIX
+
+    console.log("deliverOrder found order:", order);
+
     if (!order) {
-      return res.status(404).json({ success: false, message: "Order not found or unauthorized" });
+      return res.status(404).json({
+        success: false,
+        message: "Order not found or unauthorized",
+      });
     }
 
     if (order.status !== "shipped") {
       return res.status(400).json({
         success: false,
-        message: 'Order must be shipped before it can be delivered',
+        message: "Order must be shipped before it can be delivered",
       });
     }
 
-    // Mark as delivered
     order.status = "delivered";
     order.statusHistory.push({ status: "delivered" });
 
     await order.save();
 
+    // ✅ FIX EMAIL
+    const email = order.userId?.email;
+
+    if (email) {
+      await sendOrderUpdateEmail(email, "delivered");
+    } else {
+      console.error("Missing user email for order:", order._id);
+    }
+
     res.json({
       success: true,
-      message: 'Order marked as delivered successfully',
+      message: "Order marked as delivered successfully",
       order,
     });
   } catch (err) {
@@ -694,8 +998,6 @@ exports.deliverOrder = async (req, res) => {
   }
 };
 
-
-// Customer initiates return
 exports.initiateReturn = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -988,4 +1290,98 @@ exports.cancelOrderByUser = async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error" });
   }
 };
+
+
+
+
+
+
+
+
+// exports.shipOrder = async (req, res) => {
+//   try {
+//     const vendorId = req.user.id;
+//     const orderId = req.params.orderId;
+//     const { trackingId, trackingUrl, vendorNote } = req.body;
+
+//     if (!trackingId || !trackingUrl) {
+//       return res
+//         .status(400)
+//         .json({ success: false, message: "Tracking ID and URL are required" });
+//     }
+
+//     const order = await Order.findOne({ _id: orderId, vendorId });
+
+//     if (!order) {
+//       return res
+//         .status(404)
+//         .json({ success: false, message: "Order not found or unauthorized" });
+//     }
+
+//     if (order.status !== "accepted") {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Only accepted orders can be shipped",
+//       });
+//     }
+
+//     order.trackingInfo = { trackingId, trackingUrl };
+//     if (vendorNote) order.vendorNote = vendorNote;
+
+//     order.status = "shipped";
+//     order.statusHistory.push({ status: "shipped" });
+
+//     await order.save();
+//     await sendOrderUpdateEmail(order.customerEmail, "shipped", trackingUrl);  
+
+//     res.json({
+//       success: true,
+//       message: "Order marked as shipped",
+//       order,
+//     });
+//   } catch (err) {
+//     console.error("Error in shipOrder:", err);
+//     res.status(500).json({ success: false, message: "Server error" });
+//   }
+// };
+
+
+// exports.deliverOrder = async (req, res) => {
+//   try {
+//     const vendorId = req.user.id;
+//     const orderId = req.params.orderId;
+
+//     const order = await Order.findOne({ _id: orderId, vendorId });
+//     console.log("deliverOrder found order:", order) // Debug log
+//     if (!order) {
+//       return res.status(404).json({ success: false, message: "Order not found or unauthorized" });
+//     }
+
+//     if (order.status !== "shipped") {
+//       return res.status(400).json({
+//         success: false,
+//         message: 'Order must be shipped before it can be delivered',
+//       });
+//     }
+
+//     // Mark as delivered
+//     order.status = "delivered";
+//     await sendOrderUpdateEmail(order.customerEmail, "delivered");
+
+//     await order.save();
+//     await sendOrderUpdateEmail(order.customerEmail, "delivered");
+
+//     res.json({
+//       success: true,
+//       message: 'Order marked as delivered successfully',
+//       order,
+//     });
+//   } catch (err) {
+//     console.error("Error delivering order:", err);
+//     res.status(500).json({ success: false, message: "Server error" });
+//   }
+// };
+
+
+// Customer initiates return
 
