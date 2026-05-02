@@ -88,6 +88,7 @@ const app = express();
 
 const allowedOrigins = Array.from(
   new Set([
+    'https://www.mosaicbizhub.com',
     'https://app.mosaicbizhub.com',
     'http://localhost:3000',
     'http://localhost:8081',

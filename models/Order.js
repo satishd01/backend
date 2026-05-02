@@ -68,6 +68,10 @@ const orderSchema = new Schema(
       type: Number, // stored in smallest currency unit (e.g. paise if INR)
       required: true,
     },
+    subtotalAmount: {
+      type: Number,
+      required: true,
+    },
     currency: {
       type: String,
       default: "USD",
@@ -108,6 +112,32 @@ const orderSchema = new Schema(
       state: String,
       country: String,
       pincode: String,
+    },
+    shipping: {
+      deliverySpeed: {
+        type: String,
+        enum: ["standard", "express", "local"],
+      },
+      method: {
+        type: String,
+        enum: ["flat_rate", "quantity_based", "free_shipping"],
+      },
+      amount: {
+        type: Number,
+        default: 0,
+      },
+      freeShippingApplied: {
+        type: Boolean,
+        default: false,
+      },
+      freeShippingThreshold: {
+        type: Number,
+        default: null,
+      },
+      quantityTier: {
+        minQuantity: Number,
+        maxQuantity: Number,
+      },
     },
     paymentStatus: {
       type: String,

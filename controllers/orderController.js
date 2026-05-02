@@ -97,6 +97,10 @@ const User = require("../models/User");
 const ProductVariant = require("../models/ProductVariant")  ;
 const Business = require("../models/Business");
 const { sendOrderStatusEmail, sendOrderUpdateEmail, sendVendorNewOrderEmail, sendCustomerOrderPlacedEmail } = require("../utils/orderPhase");
+const {
+  calculateShippingForVendor,
+  normalizeDeliverySpeed,
+} = require("../utils/vendorShipping");
 
 const toNum = (value) => {
   if (value && typeof value === "object" && value.$numberDecimal != null) {
@@ -187,6 +191,23 @@ const resolveVariantSelection = (variantDoc, requestedValue) => {
     stockSource: variantDoc,
     usesNestedSizes: false,
   };
+};
+
+const resolveRequestedDeliverySpeed = (body) => {
+  return normalizeDeliverySpeed(
+    body?.deliverySpeed ||
+      body?.selectedDeliverySpeed ||
+      body?.deliveryOption ||
+      body?.speed ||
+      body?.shippingMethod ||
+      body?.shippingType ||
+      body?.shippingOption ||
+      body?.shipping?.deliverySpeed ||
+      body?.shipping?.selectedDeliverySpeed ||
+      body?.shipping?.speed ||
+      body?.shipping?.method ||
+      body?.shipping?.type
+  );
 };
 
 // exports.initiateOrder = async (req, res) => {
@@ -419,6 +440,7 @@ exports.initiateOrder = async (req, res) => {
   try {
     const { items, shippingAddress, userNote } = req.body;
     const userId = req.user.id;
+    const deliverySpeed = resolveRequestedDeliverySpeed(req.body);
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({
@@ -545,8 +567,12 @@ exports.initiateOrder = async (req, res) => {
     const vendorId = vendorIds[0];
     const { businessId, items: vendorItems } = vendorItemMap[vendorId];
 
-    const totalAmount = vendorItems.reduce(
+    const subtotalAmount = vendorItems.reduce(
       (sum, i) => sum + i.price * i.quantity,
+      0
+    );
+    const totalQuantity = vendorItems.reduce(
+      (sum, i) => sum + Number(i.quantity || 0),
       0
     );
 
@@ -596,6 +622,26 @@ exports.initiateOrder = async (req, res) => {
       });
     }
 
+    let shippingCalculation;
+    try {
+      shippingCalculation = calculateShippingForVendor(
+        business.shippingSettings,
+        {
+          deliverySpeed,
+          subtotal: subtotalAmount,
+          totalQuantity,
+        }
+      );
+    } catch (shippingError) {
+      return res.status(400).json({
+        success: false,
+        message: shippingError.message,
+      });
+    }
+
+    const totalAmount =
+      subtotalAmount + Number(shippingCalculation.amount || 0);
+
     const groupOrderId = uuidv4();
 
     const order = await new Order({
@@ -604,11 +650,25 @@ exports.initiateOrder = async (req, res) => {
       vendorId,
       businessId,
       items: vendorItems,
+      subtotalAmount,
       totalAmount,
       currency: "USD",
       status: "created",
       statusHistory: [{ status: "created" }],
       shippingAddress,
+      shipping: {
+        deliverySpeed: shippingCalculation.deliverySpeed,
+        method: shippingCalculation.method,
+        amount: Number(shippingCalculation.amount || 0),
+        freeShippingApplied: Boolean(shippingCalculation.freeShippingApplied),
+        freeShippingThreshold: shippingCalculation.freeShippingThreshold,
+        quantityTier: shippingCalculation.matchedTier
+          ? {
+              minQuantity: shippingCalculation.matchedTier.minQuantity,
+              maxQuantity: shippingCalculation.matchedTier.maxQuantity,
+            }
+          : undefined,
+      },
       userNote,
       paymentStatus: "pending",
       paymentMethod: "stripe",
@@ -672,6 +732,22 @@ exports.initiateOrder = async (req, res) => {
       groupOrderId,
       orderId: order._id,
       clientSecret: paymentIntent.client_secret,
+      totals: {
+        subtotalAmount,
+        shippingAmount: Number(shippingCalculation.amount || 0),
+        totalAmount,
+        deliverySpeed: shippingCalculation.deliverySpeed,
+        shippingMethod: shippingCalculation.method,
+        freeShippingApplied: Boolean(shippingCalculation.freeShippingApplied),
+      },
+      shipping: {
+        deliverySpeed: shippingCalculation.deliverySpeed,
+        amount: Number(shippingCalculation.amount || 0),
+        method: shippingCalculation.method,
+        freeShippingApplied: Boolean(shippingCalculation.freeShippingApplied),
+        freeShippingThreshold: shippingCalculation.freeShippingThreshold,
+        matchedTier: shippingCalculation.matchedTier || null,
+      },
     });
   } catch (err) {
     console.error("Order initiation failed:", err);

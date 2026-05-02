@@ -197,6 +197,34 @@ const businessSchema = new mongoose.Schema(
       averageRating: { type: Number, default: 0 },
       reviewCount: { type: Number, default: 0 },
     },
+
+    shippingSettings: {
+      method: {
+        type: String,
+        enum: ["flat_rate", "quantity_based"],
+        default: null,
+      },
+      freeShipping: {
+        enabled: { type: Boolean, default: false },
+        threshold: { type: Number, default: null },
+      },
+      flatRate: {
+        standard: { type: Number, default: null },
+        express: { type: Number, default: null },
+        local: { type: Number, default: null },
+      },
+      quantityTiers: [
+        {
+          minQuantity: { type: Number, required: true },
+          maxQuantity: { type: Number, default: null },
+          rates: {
+            standard: { type: Number, required: true },
+            express: { type: Number, required: true },
+            local: { type: Number, required: true },
+          },
+        },
+      ],
+    },
     
   },
   { timestamps: true }

@@ -2,6 +2,11 @@ const Cart = require('../../models/Cart');
 const CartItem = require('../../models/CartItem');
 const Product = require('../../models/Product');
 const ProductVariant = require('../../models/ProductVariant');
+const Business = require('../../models/Business');
+const {
+    calculateShippingForVendor,
+    normalizeDeliverySpeed,
+} = require('../../utils/vendorShipping');
 
 const toNum = (value) => {
     if (value && typeof value === 'object' && value.$numberDecimal != null) {
@@ -35,6 +40,23 @@ const resolveRequestedShippingMethod = (body) => {
     return body?.shippingMethod || body?.shippingType || body?.shippingOption || body?.shipping?.method || body?.shipping?.type || null;
 };
 
+const resolveRequestedDeliverySpeed = (source) => {
+    return normalizeDeliverySpeed(
+        source?.deliverySpeed ||
+        source?.selectedDeliverySpeed ||
+        source?.deliveryOption ||
+        source?.speed ||
+        source?.shippingMethod ||
+        source?.shippingType ||
+        source?.shippingOption ||
+        source?.shipping?.deliverySpeed ||
+        source?.shipping?.selectedDeliverySpeed ||
+        source?.shipping?.speed ||
+        source?.shipping?.method ||
+        source?.shipping?.type
+    );
+};
+
 const resolveShippingSelection = (productDoc, variantDoc, requestedMethod) => {
     const shipping = getEffectiveShipping(productDoc, variantDoc);
     const requested = requestedMethod ? String(requestedMethod).trim().toLowerCase() : 'standard';
@@ -49,6 +71,72 @@ const resolveShippingSelection = (productDoc, variantDoc, requestedMethod) => {
         shipping,
         shippingMethod: requested,
         shippingCharge: charge,
+    };
+};
+
+const buildCartPricing = async ({ cartDoc, items, deliverySpeed }) => {
+    const subtotalAmount = items.reduce(
+        (sum, item) => sum + (Number(item.selectedSizePrice || 0) * Number(item.quantity || 0)),
+        0
+    );
+    const totalQuantity = items.reduce(
+        (sum, item) => sum + (Number(item.quantity) || 0),
+        0
+    );
+
+    const business = cartDoc?.businessId
+        ? await Business.findById(cartDoc.businessId)
+            .select('businessName slug shippingSettings')
+            .lean()
+        : null;
+
+    let shipping = null;
+    let shippingError = null;
+
+    if (business?.shippingSettings?.method && totalQuantity > 0) {
+        try {
+            const shippingResult = calculateShippingForVendor(
+                business.shippingSettings,
+                {
+                    deliverySpeed,
+                    subtotal: subtotalAmount,
+                    totalQuantity,
+                }
+            );
+
+            shipping = {
+                deliverySpeed: shippingResult.deliverySpeed,
+                amount: Number(shippingResult.amount || 0),
+                method: shippingResult.method,
+                freeShippingApplied: Boolean(shippingResult.freeShippingApplied),
+                freeShippingThreshold: shippingResult.freeShippingThreshold,
+                matchedTier: shippingResult.matchedTier,
+            };
+        } catch (error) {
+            shippingError = error.message;
+        }
+    } else if (totalQuantity > 0) {
+        shippingError = 'Vendor shipping settings are not configured';
+    }
+
+    const shippingAmount = Number(shipping?.amount || 0);
+
+    return {
+        business: business
+            ? {
+                _id: business._id,
+                businessName: business.businessName,
+                slug: business.slug,
+            }
+            : null,
+        availableDeliverySpeeds: ['standard', 'express', 'local'],
+        selectedDeliverySpeed: deliverySpeed,
+        subtotalAmount,
+        totalQuantity,
+        shipping,
+        shippingError,
+        totalAmount: subtotalAmount + shippingAmount,
+        currency: 'USD',
     };
 };
 
@@ -239,6 +327,11 @@ const addItemToCart = async (req, res) => {
 // Get Cart
 const getCart = async (req, res) => {
     try {
+        const deliverySpeed = resolveRequestedDeliverySpeed({
+            ...req.query,
+            shipping: req.query,
+        });
+
         // Fetch the cart for the user and populate CartItems with productId and variantId
         const cart = await Cart.findOne({ userId: req.user._id })
             .populate({
@@ -250,7 +343,10 @@ const getCart = async (req, res) => {
             });
 
         if (!cart) {
-            return res.status(404).json({ message: 'Cart not found' });
+            return res.status(200).json({
+                message: 'Cart retrieved successfully',
+                cart: null,
+            });
         }
 
         const invalidItems = []; // To track invalid items removed from the cart
@@ -317,11 +413,19 @@ const getCart = async (req, res) => {
             await CartItem.deleteMany({ _id: { $in: invalidItems } });  // Remove invalid items
         }
 
+        const items = cartItems.filter(item => item !== null);
+        const pricing = await buildCartPricing({
+            cartDoc: cart,
+            items,
+            deliverySpeed,
+        });
+
         return res.status(200).json({
             message: invalidItems.length > 0 ? 'Some items were removed from the cart as they were unpublished or deleted.' : 'Cart retrieved successfully',
             cart: {
                 ...cart.toObject(),
-                items: cartItems.filter(item => item !== null),  // Filter out the null values (removed items)
+                items,  // Filter out the null values (removed items)
+                pricing,
             },
         });
     } catch (err) {

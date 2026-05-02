@@ -49,6 +49,20 @@ router.get(
   businessController.getMyBusinesses
 );
 
+router.get(
+  '/:id/shipping-settings',
+  authenticate,
+  isBusinessOwner,
+  businessController.getBusinessShippingSettings
+);
+
+router.put(
+  '/:id/shipping-settings',
+  authenticate,
+  isBusinessOwner,
+  businessController.updateBusinessShippingSettings
+);
+
 // Get a single business by slug (public)
 router.get('/public/:slug', businessController.getBusinessBySlugPublic);
 

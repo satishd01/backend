@@ -19,6 +19,17 @@ exports.sendOtpEmail = async (to, otp) => {
   await transporter.sendMail(mailOptions);
 };
 
+exports.sendPasswordResetOtpEmail = async (to, otp) => {
+  const mailOptions = {
+    from: `"Mosaic Biz Hub" <${process.env.MAIL_USER}>`,
+    to,
+    subject: 'Password Reset OTP',
+    text: `Your password reset OTP is ${otp}. It will expire in 10 minutes.`,
+  };
+
+  await transporter.sendMail(mailOptions);
+};
+
 exports.sendWelcomeEmail = async (to, firstName, role) => {
   try {
     const safeName = firstName || 'there';

@@ -2,7 +2,7 @@ const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { validationResult } = require('express-validator');
-const { sendOtpEmail, sendWelcomeEmail } = require('../utils/mailer');
+const { sendOtpEmail, sendWelcomeEmail, sendPasswordResetOtpEmail } = require('../utils/mailer');
 
  exports.registerUser = async (req, res) => {
     const errors = validationResult(req);
@@ -397,6 +397,110 @@ exports.resendOtp = async (req, res) => {
     } catch (err) {
         console.error('Resend OTP error:', err);
         res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+exports.forgotPassword = async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ success: false, errors: errors.array() });
+    }
+
+    const { email } = req.body;
+
+    try {
+        const user = await User.findOne({ email });
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        if (user.isDeleted) {
+            return res.status(403).json({ success: false, message: 'Account has been deleted' });
+        }
+
+        if (user.isBlocked) {
+            return res.status(403).json({ success: false, message: 'Account is blocked by admin' });
+        }
+
+        if (!user.passwordHash) {
+            return res.status(400).json({ success: false, message: 'Password reset is not available for this account' });
+        }
+
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        const otpHash = await bcrypt.hash(otp, 10);
+        const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
+
+        user.resetPasswordOtp = otpHash;
+        user.resetPasswordOtpExpiry = otpExpiry;
+        await user.save();
+
+        try {
+            await sendPasswordResetOtpEmail(user.email, otp);
+        } catch (emailError) {
+            console.error('Failed to send password reset OTP email:', emailError);
+            return res.status(500).json({ success: false, message: 'Failed to send reset OTP' });
+        }
+
+        console.log(`Password reset OTP for ${email} is: ${otp}`);
+
+        return res.status(200).json({
+            success: true,
+            message: 'Password reset OTP sent successfully.',
+        });
+    } catch (err) {
+        console.error('Forgot password error:', err);
+        return res.status(500).json({ success: false, message: 'Server error' });
+    }
+};
+
+exports.resetPassword = async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ success: false, errors: errors.array() });
+    }
+
+    const { email, otp, newPassword } = req.body;
+
+    try {
+        const user = await User.findOne({ email });
+        if (!user || !user.resetPasswordOtp || !user.resetPasswordOtpExpiry) {
+            return res.status(400).json({ success: false, message: 'Invalid or expired reset request' });
+        }
+
+        if (user.isDeleted) {
+            return res.status(403).json({ success: false, message: 'Account has been deleted' });
+        }
+
+        if (user.isBlocked) {
+            return res.status(403).json({ success: false, message: 'Account is blocked by admin' });
+        }
+
+        if (user.resetPasswordOtpExpiry < Date.now()) {
+            user.resetPasswordOtp = undefined;
+            user.resetPasswordOtpExpiry = undefined;
+            await user.save();
+
+            return res.status(400).json({ success: false, message: 'Reset OTP has expired' });
+        }
+
+        const isValidOtp = await bcrypt.compare(otp, user.resetPasswordOtp);
+        if (!isValidOtp) {
+            return res.status(400).json({ success: false, message: 'Invalid reset OTP' });
+        }
+
+        const passwordHash = await bcrypt.hash(newPassword, 12);
+        user.passwordHash = passwordHash;
+        user.resetPasswordOtp = undefined;
+        user.resetPasswordOtpExpiry = undefined;
+        await user.save();
+
+        return res.status(200).json({
+            success: true,
+            message: 'Password reset successful',
+        });
+    } catch (err) {
+        console.error('Reset password error:', err);
+        return res.status(500).json({ success: false, message: 'Server error' });
     }
 };
 

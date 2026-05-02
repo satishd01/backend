@@ -5,6 +5,9 @@ const cleanupUploads = require("../utils/cleanupUploads");
 const deleteCloudinaryFile = require("../utils/deleteCloudinaryFile");
 const { verifyPayPalPayment } = require("../utils/paypalVerification");
 const SubscriptionPlan = require("../models/SubscriptionPlan");
+const {
+  normalizeShippingSettingsInput,
+} = require("../utils/vendorShipping");
 
 exports.createBusiness = async (req, res) => {
   try {
@@ -182,6 +185,67 @@ exports.getMyBusinesses = async (req, res) => {
   } catch (error) {
     console.error("Error fetching businesses:", error);
     res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+exports.getBusinessShippingSettings = async (req, res) => {
+  try {
+    const business = await Business.findOne({
+      _id: req.params.id,
+      owner: req.user._id,
+    }).select("shippingSettings");
+
+    if (!business) {
+      return res.status(404).json({ message: "Business not found" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      shippingSettings: business.shippingSettings || {
+        method: null,
+        freeShipping: { enabled: false, threshold: null },
+        flatRate: null,
+        quantityTiers: [],
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching shipping settings:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+exports.updateBusinessShippingSettings = async (req, res) => {
+  try {
+    const business = await Business.findOne({
+      _id: req.params.id,
+      owner: req.user._id,
+    });
+
+    if (!business) {
+      return res.status(404).json({ message: "Business not found" });
+    }
+
+    let shippingSettings;
+    try {
+      shippingSettings = normalizeShippingSettingsInput(req.body);
+    } catch (validationError) {
+      return res.status(400).json({
+        success: false,
+        message: validationError.message,
+      });
+    }
+
+    business.shippingSettings = shippingSettings;
+    await business.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Shipping settings updated successfully",
+      shippingSettings: business.shippingSettings,
+    });
+  } catch (error) {
+    console.error("Error updating shipping settings:", error);
+    return res.status(500).json({ message: "Internal server error" });
   }
 };
 
