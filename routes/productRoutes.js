@@ -15,6 +15,8 @@ const {
 } = require('../controllers/productController');
 const authenticate = require('../middlewares/authenticate');
 const isBusinessOwner = require('../middlewares/isBusinessOwner');
+const isCustomer = require('../middlewares/isCustomer');
+const { listReviews, upsertReview, deleteReview } = require('../controllers/reviewController');
 const { 
   validateProductInput, 
   validateVariantInput, 
@@ -59,6 +61,25 @@ router.get(
   authenticate,
   isBusinessOwner,
   getBusinessProducts  // Note: This should be getBusinessProducts, not getProductById
+);
+
+router.get(
+  '/:productId/reviews',
+  listReviews('product')
+);
+
+router.post(
+  '/:productId/reviews',
+  authenticate,
+  isCustomer,
+  upsertReview('product')
+);
+
+router.delete(
+  '/:productId/reviews/:reviewId',
+  authenticate,
+  isCustomer,
+  deleteReview('product')
 );
 
 // ============================================

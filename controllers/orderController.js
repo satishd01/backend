@@ -101,6 +101,13 @@ const {
   calculateShippingForVendor,
   normalizeDeliverySpeed,
 } = require("../utils/vendorShipping");
+const {
+  getResolvedTaxCategory,
+  getTaxRateForCategory,
+  buildTaxAwareAmounts,
+  extractTaxFromInclusiveAmount,
+  roundCurrency,
+} = require("../utils/vendorTax");
 
 const toNum = (value) => {
   if (value && typeof value === "object" && value.$numberDecimal != null) {
@@ -525,13 +532,6 @@ exports.initiateOrder = async (req, res) => {
         ? Number(selectedVariant.salePrice)
         : Number(selectedVariant.price);
 
-      if (Number(price) !== actualPrice) {
-        return res.status(400).json({
-          success: false,
-          message: `Price mismatch for size ${size}`,
-        });
-      }
-
       const vendorId = variant.ownerId.toString();
 
       if (!vendorItemMap[vendorId]) {
@@ -545,9 +545,11 @@ exports.initiateOrder = async (req, res) => {
         productId,
         variantId,
         quantity,
-        price: actualPrice,
+        submittedPrice: Number(price),
+        priceExclTax: actualPrice,
         size,
         sku: selectedVariant.sku,
+        taxCategory: getResolvedTaxCategory(variant.productId),
         color:
           variant.color ||
           getVariantAttribute(variant, "color") ||
@@ -565,16 +567,7 @@ exports.initiateOrder = async (req, res) => {
     }
 
     const vendorId = vendorIds[0];
-    const { businessId, items: vendorItems } = vendorItemMap[vendorId];
-
-    const subtotalAmount = vendorItems.reduce(
-      (sum, i) => sum + i.price * i.quantity,
-      0
-    );
-    const totalQuantity = vendorItems.reduce(
-      (sum, i) => sum + Number(i.quantity || 0),
-      0
-    );
+    const { businessId, items: rawVendorItems } = vendorItemMap[vendorId];
 
     // Load user + business
     const business = await Business.findById(businessId);
@@ -622,6 +615,72 @@ exports.initiateOrder = async (req, res) => {
       });
     }
 
+    const vendorItems = rawVendorItems.map((item) => {
+      const taxRate = getTaxRateForCategory(
+        business.taxSettings,
+        item.taxCategory
+      );
+      const taxPricing = buildTaxAwareAmounts({
+        priceExclTax: item.priceExclTax,
+        salePriceExclTax: null,
+        taxRate,
+      });
+      const unitPriceInclTax = taxPricing.priceInclTax ?? roundCurrency(item.priceExclTax);
+      const lineAmounts = extractTaxFromInclusiveAmount({
+        inclusiveAmount: unitPriceInclTax * Number(item.quantity || 0),
+        taxRate,
+      });
+      const submittedPrice = Number(item.submittedPrice);
+      const acceptsLegacyPrice =
+        Math.abs(submittedPrice - Number(item.priceExclTax || 0)) < 0.01;
+      const acceptsTaxInclusivePrice =
+        Math.abs(submittedPrice - Number(unitPriceInclTax || 0)) < 0.01;
+
+      if (!acceptsLegacyPrice && !acceptsTaxInclusivePrice) {
+        const error = new Error(`Price mismatch for size ${item.size}`);
+        error.statusCode = 400;
+        throw error;
+      }
+
+      return {
+        productId: item.productId,
+        variantId: item.variantId,
+        quantity: item.quantity,
+        price: unitPriceInclTax,
+        size: item.size,
+        sku: item.sku,
+        color: item.color,
+        tax: {
+          categoryCode: item.taxCategory?.code || null,
+          categoryLabel: item.taxCategory?.label || null,
+          rate: taxRate,
+          taxIncluded: true,
+          unitPriceExclTax: taxPricing.priceExclTax,
+          unitPriceInclTax,
+          lineBaseAmount: lineAmounts.amountExclTax,
+          lineTaxAmount: lineAmounts.taxAmount,
+          lineTotalAmount: lineAmounts.amountInclTax,
+        },
+      };
+    });
+
+    const subtotalAmount = vendorItems.reduce(
+      (sum, i) => sum + Number(i.tax?.lineTotalAmount || (i.price * i.quantity) || 0),
+      0
+    );
+    const subtotalExclTaxAmount = vendorItems.reduce(
+      (sum, i) => sum + Number(i.tax?.lineBaseAmount || 0),
+      0
+    );
+    const taxTotal = vendorItems.reduce(
+      (sum, i) => sum + Number(i.tax?.lineTaxAmount || 0),
+      0
+    );
+    const totalQuantity = vendorItems.reduce(
+      (sum, i) => sum + Number(i.quantity || 0),
+      0
+    );
+
     let shippingCalculation;
     try {
       shippingCalculation = calculateShippingForVendor(
@@ -651,6 +710,11 @@ exports.initiateOrder = async (req, res) => {
       businessId,
       items: vendorItems,
       subtotalAmount,
+      taxSummary: {
+        subtotalExclTaxAmount,
+        taxTotal,
+        taxIncluded: true,
+      },
       totalAmount,
       currency: "USD",
       status: "created",
@@ -733,7 +797,9 @@ exports.initiateOrder = async (req, res) => {
       orderId: order._id,
       clientSecret: paymentIntent.client_secret,
       totals: {
+        subtotalExclTaxAmount,
         subtotalAmount,
+        taxTotal,
         shippingAmount: Number(shippingCalculation.amount || 0),
         totalAmount,
         deliverySpeed: shippingCalculation.deliverySpeed,
@@ -748,9 +814,22 @@ exports.initiateOrder = async (req, res) => {
         freeShippingThreshold: shippingCalculation.freeShippingThreshold,
         matchedTier: shippingCalculation.matchedTier || null,
       },
+      taxSummary: {
+        subtotalExclTaxAmount,
+        subtotalInclTaxAmount: subtotalAmount,
+        taxTotal,
+        taxIncluded: true,
+      },
     });
   } catch (err) {
     console.error("Order initiation failed:", err);
+
+    if (err?.statusCode === 400) {
+      return res.status(400).json({
+        success: false,
+        message: err.message || "Invalid order payload",
+      });
+    }
 
     if (err?.code === "insufficient_capabilities_for_transfer") {
       return res.status(400).json({

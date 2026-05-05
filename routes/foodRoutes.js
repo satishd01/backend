@@ -13,6 +13,8 @@ const {
 
 const authenticate = require('../middlewares/authenticate');
 const isBusinessOwner = require('../middlewares/isBusinessOwner');
+const isCustomer = require('../middlewares/isCustomer');
+const { listReviews, upsertReview, deleteReview } = require('../controllers/reviewController');
 
 router.get('/upload-url', authenticate, getFoodUploadUrl);
 
@@ -21,6 +23,12 @@ router.post('/add-food', authenticate, isBusinessOwner, createFood);
 router.get('/my-foods', authenticate, isBusinessOwner, getMyFoods);
 
 router.get('/business-food/:id', getBusinessFoodById);
+
+router.get('/:foodId/reviews', listReviews('food'));
+
+router.post('/:foodId/reviews', authenticate, isCustomer, upsertReview('food'));
+
+router.delete('/:foodId/reviews/:reviewId', authenticate, isCustomer, deleteReview('food'));
 
 router.get('/food-by-id/:id', authenticate, isBusinessOwner, getFoodById);
 

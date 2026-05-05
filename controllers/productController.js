@@ -63,6 +63,7 @@ exports.createProductWithVariants = async (req, res) => {
       description,
       categoryId,
       subcategoryId,
+      taxCategory,
       businessId,
       attributes,
       shipping,
@@ -111,6 +112,7 @@ exports.createProductWithVariants = async (req, res) => {
       description,
       categoryId,
       subcategoryId,
+      taxCategory: taxCategory || null,
       ownerId: userId,
       businessId,
       attributes: attributes || [],
@@ -482,6 +484,16 @@ exports.getProductById = async (req, res) => {
       isDeleted: false,
     }).lean();
 
+    const businessTaxSettings = await Business.findById(product.businessId)
+      .select('owner taxSettings')
+      .lean();
+
+    const vendorOnboarding = businessTaxSettings?.owner
+      ? await VendorOnboardingStage1.findOne({ userId: businessTaxSettings.owner })
+          .select('address.state')
+          .lean()
+      : null;
+
     // Parse Decimal128 values
     const parsedProduct = {
       ...product,
@@ -495,6 +507,13 @@ exports.getProductById = async (req, res) => {
     return res.status(200).json({
       success: true,
       product: parsedProduct,
+      taxContext: businessTaxSettings ? {
+        registeredState: vendorOnboarding?.address?.state || null,
+        enabled: Boolean(businessTaxSettings?.taxSettings?.enabled),
+        categories: Array.isArray(businessTaxSettings?.taxSettings?.categories)
+          ? businessTaxSettings.taxSettings.categories
+          : [],
+      } : null,
     });
 
   } catch (err) {
@@ -516,6 +535,7 @@ exports.updateProduct = async (req, res) => {
       description,
       categoryId,
       subcategoryId,
+      taxCategory,
       attributes,
       shipping,
       coverImage,
@@ -548,6 +568,7 @@ exports.updateProduct = async (req, res) => {
     product.description = description || product.description;
     product.categoryId = categoryId || product.categoryId;
     product.subcategoryId = subcategoryId || product.subcategoryId;
+    product.taxCategory = taxCategory !== undefined ? (taxCategory || null) : product.taxCategory;
     product.attributes = attributes || product.attributes;
     product.shipping = shipping || product.shipping;
     product.coverImage = coverImage || product.coverImage;

@@ -32,6 +32,17 @@ const orderItemSchema = new Schema(
       type: Number,
       required: true,
     },
+    tax: {
+      categoryCode: String,
+      categoryLabel: String,
+      rate: { type: Number, default: 0 },
+      taxIncluded: { type: Boolean, default: true },
+      unitPriceExclTax: Number,
+      unitPriceInclTax: Number,
+      lineBaseAmount: Number,
+      lineTaxAmount: Number,
+      lineTotalAmount: Number,
+    },
     chargeId: { type: String }, // from payment_intent.succeeded (charge.id)
     transferId: { type: String }, // from charge.transfer if using direct/automatic transfers
     applicationFeeId: { type: String }, // if you query application_fee later
@@ -71,6 +82,20 @@ const orderSchema = new Schema(
     subtotalAmount: {
       type: Number,
       required: true,
+    },
+    taxSummary: {
+      subtotalExclTaxAmount: {
+        type: Number,
+        default: 0,
+      },
+      taxTotal: {
+        type: Number,
+        default: 0,
+      },
+      taxIncluded: {
+        type: Boolean,
+        default: true,
+      },
     },
     currency: {
       type: String,

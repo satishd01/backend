@@ -225,6 +225,20 @@ const businessSchema = new mongoose.Schema(
         },
       ],
     },
+
+    taxSettings: {
+      enabled: {
+        type: Boolean,
+        default: false,
+      },
+      categories: [
+        {
+          code: { type: String, required: true, trim: true },
+          label: { type: String, required: true, trim: true },
+          rate: { type: Number, required: true, min: 0, max: 100 },
+        },
+      ],
+    },
     
   },
   { timestamps: true }

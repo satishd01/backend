@@ -12,6 +12,21 @@ exports.validateProductInput = [
   body('businessId').notEmpty().withMessage('Business ID is required.'),
   body('coverImage').notEmpty().withMessage('Cover image is required.'),
 
+  body('taxCategory')
+    .optional({ nullable: true })
+    .isObject().withMessage('Tax category must be an object')
+    .custom((taxCategory) => {
+      if (taxCategory) {
+        if (!taxCategory.code || typeof taxCategory.code !== 'string') {
+          throw new Error('Tax category code is required');
+        }
+        if (!taxCategory.label || typeof taxCategory.label !== 'string') {
+          throw new Error('Tax category label is required');
+        }
+      }
+      return true;
+    }),
+
   // Attributes validation (optional)
   body('attributes')
     .optional()
@@ -269,6 +284,21 @@ exports.validateUpdateProductInput = [
   body('coverImage')
     .optional()
     .isURL().withMessage('Cover image must be a valid URL'),
+
+  body('taxCategory')
+    .optional({ nullable: true })
+    .isObject().withMessage('Tax category must be an object')
+    .custom((taxCategory) => {
+      if (taxCategory) {
+        if (!taxCategory.code || typeof taxCategory.code !== 'string') {
+          throw new Error('Tax category code is required');
+        }
+        if (!taxCategory.label || typeof taxCategory.label !== 'string') {
+          throw new Error('Tax category label is required');
+        }
+      }
+      return true;
+    }),
   
   body('isPublished')
     .optional()

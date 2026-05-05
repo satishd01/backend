@@ -7,6 +7,12 @@ const {
     calculateShippingForVendor,
     normalizeDeliverySpeed,
 } = require('../../utils/vendorShipping');
+const {
+    getResolvedTaxCategory,
+    getTaxRateForCategory,
+    buildTaxAwareAmounts,
+    extractTaxFromInclusiveAmount,
+} = require('../../utils/vendorTax');
 
 const toNum = (value) => {
     if (value && typeof value === 'object' && value.$numberDecimal != null) {
@@ -74,9 +80,17 @@ const resolveShippingSelection = (productDoc, variantDoc, requestedMethod) => {
     };
 };
 
-const buildCartPricing = async ({ cartDoc, items, deliverySpeed }) => {
+const buildCartPricing = async ({ cartDoc, items, deliverySpeed, businessDoc }) => {
     const subtotalAmount = items.reduce(
-        (sum, item) => sum + (Number(item.selectedSizePrice || 0) * Number(item.quantity || 0)),
+        (sum, item) => sum + (Number(item.lineTotalAmount || 0)),
+        0
+    );
+    const subtotalExclTaxAmount = items.reduce(
+        (sum, item) => sum + (Number(item.lineBaseAmount || 0)),
+        0
+    );
+    const taxTotal = items.reduce(
+        (sum, item) => sum + (Number(item.lineTaxAmount || 0)),
         0
     );
     const totalQuantity = items.reduce(
@@ -84,11 +98,11 @@ const buildCartPricing = async ({ cartDoc, items, deliverySpeed }) => {
         0
     );
 
-    const business = cartDoc?.businessId
+    const business = businessDoc || (cartDoc?.businessId
         ? await Business.findById(cartDoc.businessId)
-            .select('businessName slug shippingSettings')
+            .select('businessName slug shippingSettings taxSettings owner')
             .lean()
-        : null;
+        : null);
 
     let shipping = null;
     let shippingError = null;
@@ -132,6 +146,9 @@ const buildCartPricing = async ({ cartDoc, items, deliverySpeed }) => {
         availableDeliverySpeeds: ['standard', 'express', 'local'],
         selectedDeliverySpeed: deliverySpeed,
         subtotalAmount,
+        subtotalExclTaxAmount,
+        taxTotal,
+        taxIncluded: true,
         totalQuantity,
         shipping,
         shippingError,
@@ -337,7 +354,7 @@ const getCart = async (req, res) => {
             .populate({
                 path: 'items',
                 populate: [
-                    { path: 'productId', select: 'title coverImage shipping isPublished isDeleted', match: { isPublished: true, isDeleted: false } },  // Populate product details (name, coverImage) and ensure it's published and not deleted
+                    { path: 'productId', select: 'title coverImage shipping taxCategory isPublished isDeleted', match: { isPublished: true, isDeleted: false } },  // Populate product details (name, coverImage) and ensure it's published and not deleted
                     { path: 'variantId', select: 'attributes sku price salePrice stock color label sizes allowBackorder shipping isPublished isDeleted images', match: { isPublished: true, isDeleted: false } },  // Populate variant details and ensure it's published and not deleted
                 ],
             });
@@ -348,6 +365,12 @@ const getCart = async (req, res) => {
                 cart: null,
             });
         }
+
+        const businessDoc = cart.businessId
+            ? await Business.findById(cart.businessId)
+                .select('businessName slug shippingSettings taxSettings owner')
+                .lean()
+            : null;
 
         const invalidItems = []; // To track invalid items removed from the cart
 
@@ -373,9 +396,25 @@ const getCart = async (req, res) => {
             const discountEnd = selectedVariant.discountEndDate ? new Date(selectedVariant.discountEndDate) : null;
             const useSale = !!selectedVariant.salePrice && (!discountEnd || discountEnd.getTime() > Date.now());
 
-            const price = toNum(selectedVariant.price);
-            const salePrice = toNum(selectedVariant.salePrice);
-            const selectedSizePrice = useSale ? salePrice : price;
+            const priceExclTax = toNum(selectedVariant.price);
+            const salePriceExclTax = toNum(selectedVariant.salePrice);
+            const taxCategory = getResolvedTaxCategory(product);
+            const taxRate = getTaxRateForCategory(businessDoc?.taxSettings, taxCategory);
+            const taxPricing = buildTaxAwareAmounts({
+                priceExclTax,
+                salePriceExclTax,
+                taxRate,
+            });
+            const selectedSizePrice = useSale
+                ? (taxPricing.salePriceInclTax ?? taxPricing.priceInclTax ?? 0)
+                : (taxPricing.priceInclTax ?? 0);
+            const selectedSizePriceExclTax = useSale
+                ? (taxPricing.salePriceExclTax ?? taxPricing.priceExclTax ?? 0)
+                : (taxPricing.priceExclTax ?? 0);
+            const lineAmounts = extractTaxFromInclusiveAmount({
+                inclusiveAmount: selectedSizePrice * Number(cartItem.quantity || 0),
+                taxRate,
+            });
             const shipping = getEffectiveShipping(product, variant);
             const shippingMethod = ['standard', 'overnight', 'local'].includes(cartItem.shippingMethod)
                 ? cartItem.shippingMethod
@@ -397,10 +436,22 @@ const getCart = async (req, res) => {
                 label: variant.label || selectedVariant.key,
                 stock: selectedVariant.stock,
                 sku: selectedVariant.sku,
-                salePrice,
+                salePrice: taxPricing.salePriceInclTax,
                 discountEndDate: selectedVariant.discountEndDate,
-                price,
-                selectedSizePrice,  // Send salePrice/price for frontend calculation
+                price: taxPricing.priceInclTax,
+                priceExclTax: taxPricing.priceExclTax,
+                priceInclTax: taxPricing.priceInclTax,
+                salePriceExclTax: taxPricing.salePriceExclTax,
+                salePriceInclTax: taxPricing.salePriceInclTax,
+                selectedSizePrice,  // Effective customer-facing tax-inclusive price
+                selectedSizePriceExclTax,
+                selectedSizePriceInclTax: selectedSizePrice,
+                taxIncluded: true,
+                taxRate,
+                taxCategory,
+                lineBaseAmount: lineAmounts.amountExclTax,
+                lineTaxAmount: lineAmounts.taxAmount,
+                lineTotalAmount: lineAmounts.amountInclTax,
                 shippingMethod,
                 shippingCharge,
                 imageUrl: Array.isArray(variant.images) ? variant.images[0] : null,
@@ -418,6 +469,7 @@ const getCart = async (req, res) => {
             cartDoc: cart,
             items,
             deliverySpeed,
+            businessDoc,
         });
 
         return res.status(200).json({

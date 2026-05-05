@@ -107,7 +107,34 @@ const productSchema = new mongoose.Schema({
     minCartValue: Number
   },
 
+  taxCategory: {
+    code: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+    label: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+  },
+
+  totalReviews: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
+
+  averageRating: {
+    type: Number,
+    default: 0,
+    min: 0,
+    max: 5,
+  },
+
   isPublished: { type: Boolean, default: false },
+  isFeatured: { type: Boolean, default: false },
   isDeleted: { type: Boolean, default: false },
 
 }, { timestamps: true });

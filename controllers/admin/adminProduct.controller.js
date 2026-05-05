@@ -6,22 +6,34 @@ exports.toggleProductFeatured = async (req, res) => {
     const { productId } = req.params;
     const { isFeatured } = req.body;
 
-    const product = await Product.findOneAndUpdate(
-      { _id: productId, isDeleted: false },
-      { isFeatured: isFeatured },
-      { new: true, runValidators: false }
-    );
+    const existingProduct = await Product.findOne({
+      _id: productId,
+      isDeleted: false
+    });
 
-    if (!product) {
+    if (!existingProduct) {
       return res.status(404).json({ error: 'Product not found' });
     }
 
+    let nextFeaturedValue;
+
+    if (typeof isFeatured === 'boolean') {
+      nextFeaturedValue = isFeatured;
+    } else if (isFeatured === 'true' || isFeatured === 'false') {
+      nextFeaturedValue = isFeatured === 'true';
+    } else {
+      nextFeaturedValue = !existingProduct.isFeatured;
+    }
+
+    existingProduct.isFeatured = nextFeaturedValue;
+    await existingProduct.save();
+
     res.status(200).json({
-      message: `Product ${isFeatured ? 'featured' : 'unfeatured'} successfully`,
+      message: `Product ${nextFeaturedValue ? 'featured' : 'unfeatured'} successfully`,
       product: {
-        _id: product._id,
-        title: product.title,
-        isFeatured: product.isFeatured
+        _id: existingProduct._id,
+        title: existingProduct.title,
+        isFeatured: existingProduct.isFeatured
       }
     });
   } catch (error) {

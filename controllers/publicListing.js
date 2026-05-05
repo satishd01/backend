@@ -5,6 +5,11 @@ const ServiceCategory = require('../models/ServiceCategory');
 const ServiceSubcategory = require('../models/ServiceSubcategory');
 const Business = require('../models/Business');
 const VendorOnboardingStage1 = require('../models/VendorOnboardingStage1');
+const {
+  getResolvedTaxCategory,
+  getTaxRateForCategory,
+  buildTaxAwareAmounts,
+} = require('../utils/vendorTax');
 
 exports.getAllServices = async (req, res) => {
   try {
@@ -1276,7 +1281,7 @@ exports.getProductById = async (req, res) => {
     const product = await Product.findById(productId)
       .populate({
         path: "businessId",
-        select: "businessName"
+        select: "businessName owner taxSettings"
       })
       .lean();
 
@@ -1293,13 +1298,29 @@ exports.getProductById = async (req, res) => {
       isDeleted: false
     }).lean();
 
+    const productTaxCategory = getResolvedTaxCategory(product);
+    const taxRate = getTaxRateForCategory(
+      product.businessId?.taxSettings,
+      productTaxCategory
+    );
+    const productTaxPricing = buildTaxAwareAmounts({
+      priceExclTax: product.price ? Number(product.price) : null,
+      salePriceExclTax: null,
+      taxRate,
+    });
+
     res.json({
       success: true,
       data: {
         ...product,
+        businessId: product.businessId?._id,
+        taxCategory: productTaxCategory,
+        taxRate,
+        taxIncluded: true,
 
         // Convert product price (Decimal128 → Number)
         price: product.price ? Number(product.price) : null,
+        ...productTaxPricing,
 
         // Clean business object (id + name)
         business: {
@@ -1307,12 +1328,47 @@ exports.getProductById = async (req, res) => {
           businessName: product.businessId?.businessName
         },
 
-        variants: variants.map(({ _id, ...rest }) => ({
-          variantId: _id,
-          ...rest,
-          price: rest.price ? Number(rest.price) : 0,
-          salePrice: rest.salePrice ? Number(rest.salePrice) : null
-        }))
+        variants: variants.map(({ _id, ...rest }) => {
+          const variantPrice = rest.price ? Number(rest.price) : 0;
+          const variantSalePrice = rest.salePrice ? Number(rest.salePrice) : null;
+          const variantTaxPricing = buildTaxAwareAmounts({
+            priceExclTax: variantPrice,
+            salePriceExclTax: variantSalePrice,
+            taxRate,
+          });
+
+          return {
+            variantId: _id,
+            ...rest,
+            price: variantPrice,
+            salePrice: variantSalePrice,
+            taxCategory: productTaxCategory,
+            taxRate,
+            taxIncluded: true,
+            ...variantTaxPricing,
+            sizes: Array.isArray(rest.sizes)
+              ? rest.sizes.map((size) => {
+                  const sizePrice = size?.price ? Number(size.price) : 0;
+                  const sizeSalePrice = size?.salePrice ? Number(size.salePrice) : null;
+                  const sizeTaxPricing = buildTaxAwareAmounts({
+                    priceExclTax: sizePrice,
+                    salePriceExclTax: sizeSalePrice,
+                    taxRate,
+                  });
+
+                  return {
+                    ...size,
+                    price: sizePrice,
+                    salePrice: sizeSalePrice,
+                    taxCategory: productTaxCategory,
+                    taxRate,
+                    taxIncluded: true,
+                    ...sizeTaxPricing,
+                  };
+                })
+              : [],
+          };
+        })
       }
     });
 

@@ -63,6 +63,20 @@ router.put(
   businessController.updateBusinessShippingSettings
 );
 
+router.get(
+  '/:id/tax-settings',
+  authenticate,
+  isBusinessOwner,
+  businessController.getBusinessTaxSettings
+);
+
+router.put(
+  '/:id/tax-settings',
+  authenticate,
+  isBusinessOwner,
+  businessController.updateBusinessTaxSettings
+);
+
 // Get a single business by slug (public)
 router.get('/public/:slug', businessController.getBusinessBySlugPublic);
 

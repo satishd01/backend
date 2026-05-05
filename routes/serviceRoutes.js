@@ -3,6 +3,8 @@ const router = express.Router();
 const { createService, getMyServices, deleteService, updateService, getServiceById, getBusinessServiceById, getServiceUploadUrl, createParentService, addChildServices, getParentServices, getChildServices } = require('../controllers/serviceController');
 const authenticate = require('../middlewares/authenticate');
 const isBusinessOwner = require('../middlewares/isBusinessOwner');
+const isCustomer = require('../middlewares/isCustomer');
+const { listReviews, upsertReview, deleteReview } = require('../controllers/reviewController');
 
 router.get(
   '/upload-url',
@@ -56,6 +58,25 @@ router.get(
 router.get(
   '/business-service/:id',
   getBusinessServiceById
+);
+
+router.get(
+  '/:serviceId/reviews',
+  listReviews('service')
+);
+
+router.post(
+  '/:serviceId/reviews',
+  authenticate,
+  isCustomer,
+  upsertReview('service')
+);
+
+router.delete(
+  '/:serviceId/reviews/:reviewId',
+  authenticate,
+  isCustomer,
+  deleteReview('service')
 );
 
 router.get(
