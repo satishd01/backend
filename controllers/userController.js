@@ -4,6 +4,29 @@ const jwt = require('jsonwebtoken');
 const { validationResult } = require('express-validator');
 const { sendOtpEmail, sendWelcomeEmail, sendPasswordResetOtpEmail } = require('../utils/mailer');
 
+const isProd = process.env.NODE_ENV === 'production';
+
+function getCookieOptions(maxAge, { httpOnly = true } = {}) {
+    return {
+        httpOnly,
+        secure: isProd,
+        sameSite: isProd ? 'none' : 'lax',
+        domain: isProd ? '.mosaicbizhub.com' : undefined,
+        path: '/',
+        maxAge,
+    };
+}
+
+function clearCookieWithSharedOptions(res, name, { httpOnly = true } = {}) {
+    res.clearCookie(name, {
+        httpOnly,
+        secure: isProd,
+        sameSite: isProd ? 'none' : 'lax',
+        domain: isProd ? '.mosaicbizhub.com' : undefined,
+        path: '/',
+    });
+}
+
  exports.registerUser = async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -50,12 +73,7 @@ const { sendOtpEmail, sendWelcomeEmail, sendPasswordResetOtpEmail } = require('.
             // Continue anyway - user can resend OTP
         }
 
-        res.cookie('otpPending', 'true', {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'strict',
-            maxAge: 10 * 60 * 1000,
-        });
+        res.cookie('otpPending', 'true', getCookieOptions(10 * 60 * 1000));
 
         res.status(201).json({
             success: true,
@@ -120,28 +138,17 @@ exports.verifyOtp = async (req, res) => {
             { expiresIn: '7d' }
         );
 
-        res.cookie('token', token, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'strict',
-            maxAge: 7 * 24 * 60 * 60 * 1000,
-        });
+        res.cookie('token', token, getCookieOptions(7 * 24 * 60 * 60 * 1000));
 
-        res.cookie('user_session', 'true', {
+        res.cookie('user_session', 'true', getCookieOptions(7 * 24 * 60 * 60 * 1000, {
             httpOnly: false,
-            sameSite: 'strict',
-            secure: process.env.NODE_ENV === 'production',
-            maxAge: 7 * 24 * 60 * 60 * 1000,
-        });
+        }));
 
-        res.cookie('user_gender', user.gender || '', {
+        res.cookie('user_gender', user.gender || '', getCookieOptions(7 * 24 * 60 * 60 * 1000, {
             httpOnly: false,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'strict',
-            maxAge: 7 * 24 * 60 * 60 * 1000,
-        });
+        }));
 
-        res.clearCookie('otpPending');
+        clearCookieWithSharedOptions(res, 'otpPending');
 
         res.status(200).json({
             success: true,
@@ -380,14 +387,7 @@ exports.resendOtp = async (req, res) => {
         await sendOtpEmail(user.email, otp);
         console.log(`🔐 OTP for ${email} is: ${otp}`); // Simulate sending OTP
 
-        res.cookie('otpPending', 'true', {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'strict',
-            // sameSite: 'none',
-            // domain: '.mosaicbizhub.com',
-            maxAge: 10 * 60 * 1000,
-        });
+        res.cookie('otpPending', 'true', getCookieOptions(10 * 60 * 1000));
 
         res.status(200).json({
             success: true,
@@ -672,14 +672,7 @@ exports.loginUser = async (req, res) => {
             console.log(`🔐 OTP re-sent for ${email}: ${otp}`);
             await sendOtpEmail(user.email, otp);
 
-            res.cookie('otpPending', 'true', {
-                httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-                domain: process.env.NODE_ENV === 'production' ? '.mosaicbizhub.com' : undefined,
-                maxAge: 10 * 60 * 1000, // 10 minutes
-                path: '/',
-            });
+            res.cookie('otpPending', 'true', getCookieOptions(10 * 60 * 1000));
 
             return res.status(403).json({
                 success: false,
@@ -699,14 +692,7 @@ exports.loginUser = async (req, res) => {
             { expiresIn: '7d' }
         );
 
-        const cookieOptions = {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-            domain: process.env.NODE_ENV === 'production' ? '.mosaicbizhub.com' : undefined,
-            path: '/',
-            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-        };
+        const cookieOptions = getCookieOptions(7 * 24 * 60 * 60 * 1000);
 
         // Token cookie
         res.cookie('token', token, cookieOptions);
@@ -745,29 +731,10 @@ exports.loginUser = async (req, res) => {
 
 
 exports.logout = (req, res) => {
-  res.clearCookie('token', {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'none',
-    domain: '.mosaicbizhub.com',
-    path: '/', // must match the original path
-  });
-
-  res.clearCookie('user_session', {
-    httpOnly: false,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'none',
-    domain: '.mosaicbizhub.com',
-    path: '/',
-  });
-
-  res.clearCookie('user_gender', {
-    httpOnly: false,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'none',
-    domain: '.mosaicbizhub.com',
-    path: '/',
-  });
+  clearCookieWithSharedOptions(res, 'token');
+  clearCookieWithSharedOptions(res, 'user_session', { httpOnly: false });
+  clearCookieWithSharedOptions(res, 'user_gender', { httpOnly: false });
+  clearCookieWithSharedOptions(res, 'otpPending');
 
   res.status(200).json({ message: 'Logged out successfully' });
 };
